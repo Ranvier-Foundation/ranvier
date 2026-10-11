@@ -105,6 +105,10 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
 
     // ---------------------------------------------------------------- swap
 
+    // reentrancy-balance: re-entry is blocked by nonReentrant, and the before/after balance
+    // difference is the intended output check. Only the user or the allowlisted router can
+    // change the user's balance mid-swap, which can only affect the user's own minimum.
+    // slither-disable-next-line reentrancy-balance
     function swap(SwapQuote calldata q, bytes calldata signature, bytes calldata routerCalldata)
         external
         payable
