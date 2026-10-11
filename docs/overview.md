@@ -16,16 +16,16 @@ Later phases add own routing on high-volume pairs, split routes, market-maker qu
 
 The fee is taken from the input token, before the swap, on the source chain.
 
-| Swap                                     | Fee   |
-| ---------------------------------------- | ----- |
-| Under $10,000                            | 0.2%  |
-| $10,000 to $100,000                      | 0.15% |
-| Above $100,000                           | 0.1%  |
-| Major stablecoin to stablecoin           | 0.05% |
-| Native wrap/unwrap                       | Free  |
-| First swap per new wallet (up to $1,000) | Free  |
+| Swap                                  | Fee   |
+| ------------------------------------- | ----- |
+| Under $10,000                         | 0.2%  |
+| $10,000 to $100,000                   | 0.15% |
+| Above $100,000                        | 0.1%  |
+| Major stablecoin to stablecoin        | 0.05% |
+| Native wrap/unwrap                    | Free  |
+| First $1,000 of a wallet's first swap | Free  |
 
-The backend signs the rate into each quote (EIP-712). The contract only accepts signed rates and enforces a hard cap of 0.3%. See [ADR 0002](adr/0002-fee-schedule-semantics.md).
+The backend signs the exact fee amount into each quote (EIP-712). The contract only accepts signed fees and enforces a hard cap of 0.3% of the input. See [ADR 0002](adr/0002-fee-schedule-semantics.md).
 
 ## Architecture
 

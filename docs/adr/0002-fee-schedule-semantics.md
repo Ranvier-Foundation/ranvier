@@ -1,23 +1,28 @@
 # ADR 0002: Fee schedule semantics
 
-- Status: proposed (needs owner sign-off)
+- Status: accepted
 - Date: 2026-10-11
 
 ## Context
 
-Section 2 of the spec sets the fee tiers and special cases but leaves some edge cases open.
+The fee schedule sets tiers and special cases. Some edge cases needed a decision, in particular how the first-swap promotion combines with the other rates.
 
 ## Decision
 
-Rules are applied in this order; the first one that matches wins:
+**Base rate.** Rules are checked in this order; the first one that matches sets the rate:
 
 1. Native wrap/unwrap (e.g. ETH to WETH): 0 bps.
-2. First swap for a new wallet with a USD value of $1,000 or less: 0 bps. A first swap above $1,000 pays the normal rate. **Open question:** the alternative reading is "the first $1,000 is free and the rest pays the normal rate".
-3. Allowlisted stablecoin to allowlisted stablecoin: 5 bps.
-4. Size tiers: under $10,000 pays 20 bps; $10,000 up to and including $100,000 pays 15 bps; above $100,000 pays 10 bps.
+2. Allowlisted stablecoin to allowlisted stablecoin: 5 bps.
+3. Size tiers by the full swap's USD value: under $10,000 pays 20 bps; $10,000 up to and including $100,000 pays 15 bps; above $100,000 pays 10 bps.
 
-The fee is `floor(amountIn * bps / 10000)` in input-token base units. USD values are integer cents.
+**First-swap promotion.** On a wallet's first swap, the first $1,000 is free and the base rate applies only to the part above $1,000. The tier is still chosen by the full swap size. Examples: a $1,500 first swap at 20 bps pays on $500 ($1.00); a $50,000 first swap pays 15 bps on $49,000 ($73.50).
+
+**Rounding.** Fees are computed in input-token base units and every division rounds down, in the user's favour. USD values are integer cents.
+
+**Signed fee amount.** A partial waiver gives fees that are not a whole number of basis points, so the backend signs the exact fee amount into each quote (EIP-712) rather than a rate. The fee wrapper checks that the amount is at most 0.3% of the input (`MAX_FEE_BPS`) and charges it exactly.
 
 ## Consequences
 
-The backend computes the rate and signs it into the quote (EIP-712). The contract enforces a hard cap of 30 bps.
+- The fee shown before signing is exactly the fee charged.
+- Future discounts (e.g. VIP tiers) need no contract change as long as they stay under the cap.
+- Changing the quote's fee field is a contract change and needs a security review and re-audit.

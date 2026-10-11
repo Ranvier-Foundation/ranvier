@@ -24,10 +24,13 @@ export type FeeReason =
   | 'tier-over-100k';
 
 export interface FeeQuote {
+  /** Rate applied to the charged part of the swap. */
   bps: number;
   reason: FeeReason;
-  /** Fee in input-token base units. */
+  /** Fee in input-token base units. This exact amount is signed into the quote. */
   amount: bigint;
+  /** USD value exempt from the fee (first-swap promotion), in cents. */
+  waivedUsd: UsdCents;
 }
 
 export interface QuoteRequest {

@@ -73,14 +73,6 @@ describe('feeRate special cases', () => {
   it('does not give the stablecoin rate when only one side is a stablecoin', () => {
     expect(rate({ sellToken: USDC, buyToken: ETH }).bps).toBe(20);
   });
-
-  it('waives the first swap up to and including $1,000', () => {
-    expect(rate({ isFirstSwap: true, usdValue: 1_000_00n })).toEqual({
-      bps: 0,
-      reason: 'first-swap-promo',
-    });
-    expect(rate({ isFirstSwap: true, usdValue: 1_000_01n }).bps).toBe(20);
-  });
 });
 
 describe('feeAmount', () => {
@@ -106,6 +98,82 @@ describe('feeAmount', () => {
 
 describe('quoteFee', () => {
   it('combines rate and amount', () => {
-    expect(quoteFee(base)).toEqual({ bps: 20, reason: 'tier-under-10k', amount: 2n * 10n ** 15n });
+    expect(quoteFee(base)).toEqual({
+      bps: 20,
+      reason: 'tier-under-10k',
+      amount: 2n * 10n ** 15n,
+      waivedUsd: 0n,
+    });
+  });
+
+  describe('first-swap promotion: the first $1,000 is free', () => {
+    const usdc = (dollars: bigint) => dollars * 10n ** 6n;
+    const first = (usdValue: bigint, sellAmount: bigint, o: Partial<FeeInput> = {}) =>
+      quoteFee({
+        ...base,
+        sellToken: USDC,
+        buyToken: ETH,
+        sellAmount,
+        usdValue,
+        isFirstSwap: true,
+        ...o,
+      });
+
+    it('is fully free up to and including $1,000', () => {
+      expect(first(1_000_00n, usdc(1_000n))).toEqual({
+        bps: 20,
+        reason: 'first-swap-promo',
+        amount: 0n,
+        waivedUsd: 1_000_00n,
+      });
+      expect(first(0n, 0n).amount).toBe(0n);
+    });
+
+    it('charges the base rate only on the part above $1,000', () => {
+      // $1,500 at 0.2%: fee on $500 = $1.
+      expect(first(1_500_00n, usdc(1_500n))).toEqual({
+        bps: 20,
+        reason: 'first-swap-promo',
+        amount: usdc(1n),
+        waivedUsd: 1_000_00n,
+      });
+    });
+
+    it('keeps the tier of the full swap size', () => {
+      // $50,000 is in the 0.15% tier: fee on $49,000 = $73.50.
+      expect(first(50_000_00n, usdc(50_000n)).amount).toBe(73_500_000n);
+    });
+
+    it('applies on top of the stablecoin rate', () => {
+      // $11,000 USDC to USDT at 0.05%: fee on $10,000 = $5.
+      expect(first(11_000_00n, usdc(11_000n), { buyToken: USDT })).toMatchObject({
+        bps: 5,
+        amount: usdc(5n),
+      });
+    });
+
+    it('does not apply to free wraps', () => {
+      expect(quoteFee({ ...base, sellToken: ETH, buyToken: WETH, isFirstSwap: true })).toEqual({
+        bps: 0,
+        reason: 'wrap-unwrap',
+        amount: 0n,
+        waivedUsd: 0n,
+      });
+    });
+
+    it('never charges more than the same swap without the promotion', () => {
+      for (const dollars of [1_001n, 9_999n, 10_000n, 100_000n, 100_001n, 5_000_000n]) {
+        const promo = first(dollars * 100n, usdc(dollars));
+        const normal = quoteFee({
+          ...base,
+          sellToken: USDC,
+          buyToken: ETH,
+          sellAmount: usdc(dollars),
+          usdValue: dollars * 100n,
+        });
+        expect(promo.amount).toBeLessThan(normal.amount);
+        expect(promo.amount * 10_000n).toBeLessThanOrEqual(usdc(dollars) * BigInt(MAX_FEE_BPS));
+      }
+    });
   });
 });

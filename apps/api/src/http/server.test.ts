@@ -51,7 +51,12 @@ describe('http', () => {
       payload: { sellToken: ETH, buyToken: USDC, sellAmount: '1000000', usdValueCents: '500000' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ bps: 20, reason: 'tier-under-10k', amount: '2000' });
+    expect(res.json()).toEqual({
+      bps: 20,
+      reason: 'tier-under-10k',
+      amount: '2000',
+      waivedUsd: '0',
+    });
   });
 
   it('rejects invalid input', async () => {
@@ -87,7 +92,12 @@ describe('http', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.fee).toEqual({ bps: 20, reason: 'tier-under-10k', amount: '2000000000000000' });
+    expect(body.fee).toEqual({
+      bps: 20,
+      reason: 'tier-under-10k',
+      amount: '2000000000000000',
+      waivedUsd: '0',
+    });
     expect(body.best.tx.value).toBe('998000000000000000');
   });
 
@@ -99,6 +109,22 @@ describe('http', () => {
       }),
     ).inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody });
     expect(res.json().fee.reason).toBe('first-swap-promo');
+  });
+
+  it('charges a first swap only on the part above $1,000', async () => {
+    const res = await buildServer(
+      deps({
+        prices: { usdValue: async () => 1_500_00n },
+        history: { hasCompletedSwap: async () => false },
+      }),
+    ).inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody });
+    // 1 ETH worth $1,500: 0.2% on the $500 above the waiver = 1/3 ETH * 0.002, rounded down.
+    expect(res.json().fee).toEqual({
+      bps: 20,
+      reason: 'first-swap-promo',
+      amount: '666666666666666',
+      waivedUsd: '100000',
+    });
   });
 
   it('returns 502 when no provider can route', async () => {
