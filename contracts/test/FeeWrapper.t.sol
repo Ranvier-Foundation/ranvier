@@ -62,7 +62,7 @@ contract FeeWrapperTest is Test {
             tokenOut: tokenOut,
             amountIn: amountIn,
             minAmountOut: minOut,
-            feeBps: feeBps,
+            feeAmount: (amountIn * feeBps) / 10_000,
             router: address(router),
             routerCalldataHash: keccak256(data),
             nonce: 1,
@@ -92,7 +92,7 @@ contract FeeWrapperTest is Test {
     function test_erc20ToErc20_takesFeeAndDeliversOutput() public {
         (FeeWrapper.SwapQuote memory q, bytes memory data) = _usdcToWeth();
         vm.expectEmit(address(wrapper));
-        emit FeeWrapper.SwapExecuted(user, address(usdc), address(weth), 1_000e6, 1 ether, 2e6, 20, address(router), 1);
+        emit FeeWrapper.SwapExecuted(user, address(usdc), address(weth), 1_000e6, 1 ether, 2e6, address(router), 1);
         bytes memory sig1 = _sign(q);
         vm.prank(user);
         uint256 out = wrapper.swap(q, sig1, data);
@@ -216,7 +216,7 @@ contract FeeWrapperTest is Test {
 
     function test_revert_feeAboveCap() public {
         (FeeWrapper.SwapQuote memory q, bytes memory data) = _usdcToWeth();
-        q.feeBps = 31;
+        q.feeAmount = (q.amountIn * 31) / 10_000;
         _expectRevert(q, _sign(q), data, FeeWrapper.FeeAboveCap.selector);
     }
 
@@ -260,7 +260,7 @@ contract FeeWrapperTest is Test {
     function test_revert_tamperedFee() public {
         (FeeWrapper.SwapQuote memory q, bytes memory data) = _usdcToWeth();
         bytes memory sig = _sign(q);
-        q.feeBps = 0;
+        q.feeAmount = 0;
         _expectRevert(q, sig, data, FeeWrapper.InvalidSignature.selector);
     }
 
@@ -457,10 +457,32 @@ contract FeeWrapperTest is Test {
         assertEq(collector.balance, fee);
     }
 
-    function testFuzz_feeAboveCapAlwaysReverts(uint16 feeBps) public {
-        feeBps = uint16(bound(feeBps, uint256(wrapper.MAX_FEE_BPS()) + 1, type(uint16).max));
+    function testFuzz_feeAboveCapAlwaysReverts(uint256 feeAmount) public {
         (FeeWrapper.SwapQuote memory q, bytes memory data) = _usdcToWeth();
-        q.feeBps = feeBps;
+        uint256 cap = (q.amountIn * wrapper.MAX_FEE_BPS()) / 10_000;
+        q.feeAmount = bound(feeAmount, cap + 1, type(uint256).max);
         _expectRevert(q, _sign(q), data, FeeWrapper.FeeAboveCap.selector);
+    }
+
+    /// Partial waivers produce fees that are not a whole number of basis points; they are charged exactly.
+    function test_exactFeeAmount_isCharged() public {
+        bytes memory data = _routerCall(address(usdc), address(weth), 998_765_433, 1 ether, user);
+        FeeWrapper.SwapQuote memory q = _quote(address(usdc), address(weth), 1_000e6, 1 ether, 0, data);
+        q.feeAmount = 1_234_567;
+        bytes memory sig = _sign(q);
+        vm.prank(user);
+        wrapper.swap(q, sig, data);
+        assertEq(usdc.balanceOf(collector), 1_234_567);
+        assertEq(usdc.balanceOf(address(wrapper)), 0);
+    }
+
+    function test_feeExactlyAtCap_isAccepted() public {
+        bytes memory data = _routerCall(address(usdc), address(weth), 997e6, 1 ether, user);
+        FeeWrapper.SwapQuote memory q = _quote(address(usdc), address(weth), 1_000e6, 1 ether, 0, data);
+        q.feeAmount = 3e6;
+        bytes memory sig = _sign(q);
+        vm.prank(user);
+        wrapper.swap(q, sig, data);
+        assertEq(usdc.balanceOf(collector), 3e6);
     }
 }

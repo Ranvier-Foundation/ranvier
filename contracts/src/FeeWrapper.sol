@@ -12,20 +12,20 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @title Ranvier fee wrapper
 /// @notice Takes the platform fee from the input token, forwards the rest to an
 ///         allowlisted router, and checks the user received at least the quoted minimum.
-/// @dev Invariants (spec section 9): the fee never exceeds MAX_FEE_BPS, the contract never
+/// @dev Invariants (spec section 9): the fee never exceeds MAX_FEE_BPS of the input, the contract never
 ///      keeps funds after a swap, and only allowlisted routers are called. Same-chain swaps only;
 ///      cross-chain routes get their own entry point once bridge providers are integrated.
 contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
 
-    /// @notice Hard cap on the fee rate (0.3%). The fee schedule never goes above 0.2%.
+    /// @notice Hard cap on the fee as a share of the input (0.3%). The fee schedule never goes above 0.2%.
     uint16 public constant MAX_FEE_BPS = 30;
     uint256 private constant BPS = 10_000;
     /// @notice Sentinel for the chain's native token.
     address public constant NATIVE = address(0);
 
     bytes32 public constant SWAP_QUOTE_TYPEHASH = keccak256(
-        "SwapQuote(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint16 feeBps,address router,bytes32 routerCalldataHash,uint256 nonce,uint256 deadline)"
+        "SwapQuote(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 feeAmount,address router,bytes32 routerCalldataHash,uint256 nonce,uint256 deadline)"
     );
 
     /// @notice A quote signed by the backend fee signer. Binding the router calldata hash
@@ -36,7 +36,8 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         address tokenOut;
         uint256 amountIn;
         uint256 minAmountOut;
-        uint16 feeBps;
+        /// @dev Exact fee in input-token base units, so partial waivers (first-swap promotion) are exact.
+        uint256 feeAmount;
         address router;
         bytes32 routerCalldataHash;
         uint256 nonce;
@@ -58,7 +59,6 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         uint256 amountIn,
         uint256 amountOut,
         uint256 fee,
-        uint16 feeBps,
         address router,
         uint256 nonce
     );
@@ -123,7 +123,7 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         uint256 outBefore = _balanceOf(q.tokenOut, address(this));
         uint256 userOutBefore = _balanceOf(q.tokenOut, q.user);
 
-        uint256 fee = (q.amountIn * q.feeBps) / BPS;
+        uint256 fee = q.feeAmount;
         uint256 toRoute = q.amountIn - fee;
 
         if (nativeIn) {
@@ -150,7 +150,7 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         amountOut = _balanceOf(q.tokenOut, q.user) - userOutBefore;
         if (amountOut < q.minAmountOut) revert InsufficientOutput();
 
-        emit SwapExecuted(q.user, q.tokenIn, q.tokenOut, q.amountIn, amountOut, fee, q.feeBps, q.router, q.nonce);
+        emit SwapExecuted(q.user, q.tokenIn, q.tokenOut, q.amountIn, amountOut, fee, q.router, q.nonce);
     }
 
     /// @notice EIP-712 digest the fee signer signs for a quote.
@@ -164,7 +164,7 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
                     q.tokenOut,
                     q.amountIn,
                     q.minAmountOut,
-                    q.feeBps,
+                    q.feeAmount,
                     q.router,
                     q.routerCalldataHash,
                     q.nonce,
@@ -214,7 +214,7 @@ contract FeeWrapper is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     function _validate(SwapQuote calldata q, bytes calldata signature, bytes calldata routerCalldata) private view {
         if (msg.sender != q.user) revert NotQuoteUser();
         if (block.timestamp > q.deadline) revert QuoteExpired();
-        if (q.feeBps > MAX_FEE_BPS) revert FeeAboveCap();
+        if (q.feeAmount > (q.amountIn * MAX_FEE_BPS) / BPS) revert FeeAboveCap();
         if (!isRouterAllowed[q.router]) revert RouterNotAllowed();
         if (q.tokenIn == q.tokenOut) revert SameToken();
         if (keccak256(routerCalldata) != q.routerCalldataHash) revert CalldataMismatch();
