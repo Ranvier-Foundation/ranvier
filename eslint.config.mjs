@@ -1,0 +1,16 @@
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
+
+export default tseslint.config(
+  {
+    ignores: ['**/dist/**', '**/.next/**', '**/coverage/**', '**/node_modules/**', 'contracts/**'],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.strict,
+  {
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/consistent-type-imports': 'error',
+    },
+  },
+);

@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+
+/* Direction B tokens (Ranvier UI design canvas). */
+@theme {
+  --color-canvas: #f7f4f2;
+  --color-surface: #ffffff;
+  --color-chip: #ede6e2;
+  --color-ink: #1c1011;
+  --color-muted: #6e5f61;
+  --color-brand: #9b2c35;
+  --color-brand-deep: #3b1519;
+  --color-blush: #f2b8a6;
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}

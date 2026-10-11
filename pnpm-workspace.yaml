@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+  - contracts
+
+minimumReleaseAgeExclude:
+  - zod@4.6.6
+
+# sharp is only needed for next/image optimisation, which the web app does not use yet.
+ignoredOptionalDependencies:
+  - sharp
+
+allowBuilds:
+  esbuild: true

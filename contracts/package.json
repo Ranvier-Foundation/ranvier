@@ -1,0 +1,11 @@
+{
+  "name": "@ranvier/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "./forge.sh build --sizes",
+    "test": "./forge.sh test",
+    "coverage": "./forge.sh coverage --ir-minimum --report summary --no-match-coverage '(test|script)/'",
+    "lint": "./forge.sh fmt --check"
+  }
+}

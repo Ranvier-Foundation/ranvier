@@ -1,0 +1,13 @@
+{
+  "model": "opusplan",
+  "env": { "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet" },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/model-hint.sh" }
+        ]
+      }
+    ]
+  }
+}

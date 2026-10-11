@@ -1,0 +1,19 @@
+node_modules
+dist
+.next
+out
+coverage
+.turbo
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+contracts/out
+contracts/cache
+contracts/broadcast
+.DS_Store
+.claude/settings.local.json
+next-env.d.ts
+
+# Internal business spec: kept local, never committed
+docs/private/
