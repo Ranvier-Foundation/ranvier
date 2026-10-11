@@ -12,6 +12,5 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
-  - package-ecosystem: gitsubmodule
-    directory: /
-    schedule: { interval: weekly }
+  # Solidity libraries (contracts/lib) are git submodules pinned to release tags and
+  # upgraded by hand. Dependabot would follow their development branches instead.
