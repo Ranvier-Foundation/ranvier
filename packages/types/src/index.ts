@@ -44,9 +44,13 @@ export interface QuoteRequest {
 }
 
 export interface RouteHop {
+  /** Liquidity source, e.g. `Uniswap_V3`. */
   protocol: string;
-  fromToken: Token;
-  toToken: Token;
+  /** Token addresses on the quote's chain. */
+  from: string;
+  to: string;
+  /** Share of the input routed through this hop, in basis points. */
+  proportionBps: number;
 }
 
 /** A quote from one routing provider, already net of the platform fee. */

@@ -127,6 +127,14 @@ describe('http', () => {
     });
   });
 
+  it('returns 503 when the fee price is unavailable', async () => {
+    const res = await buildServer(
+      deps({ prices: { usdValue: async () => Promise.reject(new Error('oracle down')) } }),
+    ).inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ error: 'price_unavailable' });
+  });
+
   it('returns 502 when no provider can route', async () => {
     const res = await buildServer(
       deps({

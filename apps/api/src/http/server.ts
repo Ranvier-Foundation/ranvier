@@ -45,10 +45,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
     const request = parsed.data;
     const timeoutMs = deps.providerTimeoutMs ?? 700;
-    const [usdValue, hasSwapped] = await Promise.all([
-      deps.prices.usdValue(request.sellToken, request.sellAmount, AbortSignal.timeout(timeoutMs)),
-      deps.history.hasCompletedSwap(request.taker),
-    ]);
+    let usdValue: bigint;
+    let hasSwapped: boolean;
+    try {
+      [usdValue, hasSwapped] = await Promise.all([
+        deps.prices.usdValue(request.sellToken, request.sellAmount, AbortSignal.timeout(timeoutMs)),
+        deps.history.hasCompletedSwap(request.taker),
+      ]);
+    } catch (err: unknown) {
+      req.log.warn({ err }, 'fee inputs unavailable');
+      // Without a trusted USD value the fee tier cannot be set, so no quote is offered.
+      return reply.code(503).send({ error: 'price_unavailable' });
+    }
     const fee = quoteFee({ ...request, usdValue, isFirstSwap: !hasSwapped });
     const netSell = { ...request, sellAmount: request.sellAmount - fee.amount };
 
