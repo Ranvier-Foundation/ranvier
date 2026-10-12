@@ -32,4 +32,22 @@ describe('loadConfig', () => {
     expect(loadConfig({ ZEROX_CHAIN_IDS: '1, 10' }).ZEROX_CHAIN_IDS).toEqual([1, 10]);
     expect(() => loadConfig({ FEE_WRAPPER_ADDRESS: 'nope' })).toThrow();
   });
+
+  it('defaults and bounds the safety limits', () => {
+    expect(loadConfig({})).toMatchObject({
+      MAX_SLIPPAGE_BPS: 1_000,
+      MAX_ORACLE_DEVIATION_BPS: 500,
+    });
+    expect(loadConfig({ MAX_SLIPPAGE_BPS: '5000' }).MAX_SLIPPAGE_BPS).toBe(5_000);
+    expect(() => loadConfig({ MAX_SLIPPAGE_BPS: '5001' })).toThrow();
+    expect(() => loadConfig({ MAX_ORACLE_DEVIATION_BPS: '-1' })).toThrow();
+  });
+
+  it('parses the local signer chain allowlist', () => {
+    expect(loadConfig({}).LOCAL_SIGNER_CHAIN_IDS).toBeUndefined();
+    expect(loadConfig({ LOCAL_SIGNER_CHAIN_IDS: '31337, 84532' }).LOCAL_SIGNER_CHAIN_IDS).toEqual([
+      31337, 84532,
+    ]);
+    expect(() => loadConfig({ LOCAL_SIGNER_CHAIN_IDS: 'x' })).toThrow();
+  });
 });

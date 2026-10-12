@@ -1,5 +1,5 @@
 import { NATIVE } from '@ranvier/chains';
-import type { FeeQuote, ProviderQuote, QuoteRequest, Token } from '@ranvier/types';
+import type { FeeQuote, QuoteRequest, TokenRef } from '@ranvier/types';
 import {
   encodeFunctionData,
   getAddress,
@@ -10,6 +10,7 @@ import {
   type TypedDataDefinition,
 } from 'viem';
 import type { QuoteSigner } from '../ports/quote-signer.js';
+import type { VettedRoute } from './route-safety.js';
 
 /** Must match FeeWrapper's EIP712("Ranvier FeeWrapper", "1") and SWAP_QUOTE_TYPEHASH. */
 export const EIP712_NAME = 'Ranvier FeeWrapper';
@@ -92,11 +93,11 @@ export function toAddress(value: string): Hex {
   return getAddress(value.toLowerCase());
 }
 
-function contractToken(token: Token): Hex {
+function contractToken(token: TokenRef): Hex {
   return token.address === NATIVE ? zeroAddress : toAddress(token.address);
 }
 
-export function evmChainId(token: Token): number | undefined {
+export function evmChainId(token: TokenRef): number | undefined {
   const match = /^evm:(\d+)$/.exec(token.chain);
   return match ? Number(match[1]) : undefined;
 }
@@ -104,7 +105,8 @@ export function evmChainId(token: Token): number | undefined {
 export interface BuildSwapInput {
   request: QuoteRequest;
   fee: FeeQuote;
-  route: ProviderQuote;
+  /** Only a route that passed `vetRoute` can be signed. */
+  route: VettedRoute;
   feeWrapper: Hex;
   signer: QuoteSigner;
   /** Unix seconds. */
@@ -115,7 +117,8 @@ export interface BuildSwapInput {
 
 /**
  * Builds the signed fee-wrapper call for the chosen route. The router calldata was quoted
- * for `amountIn - feeAmount`, which is exactly what the wrapper forwards.
+ * for `amountIn - feeAmount`, which is exactly what the wrapper forwards, and `vetRoute` has
+ * checked it (ADR 0004). `minAmountOut` is the vetted floor, at least the user's slippage.
  */
 export async function buildSignedSwap(input: BuildSwapInput): Promise<SignedSwap> {
   const { request, fee, route, feeWrapper, signer, deadline, nonce } = input;
@@ -123,6 +126,7 @@ export async function buildSignedSwap(input: BuildSwapInput): Promise<SignedSwap
   if (chainId === undefined || request.buyToken.chain !== request.sellToken.chain) {
     throw new Error('signed swaps are same-chain EVM only');
   }
+  if (!signer.canSign(chainId)) throw new Error(`signer refuses chain ${chainId}`);
 
   const routerCalldata = route.tx.data as Hex;
   const quote: SwapQuote = {

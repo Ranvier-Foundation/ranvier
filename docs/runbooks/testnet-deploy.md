@@ -41,7 +41,11 @@ cast call $W 'isRouterAllowed(address)(bool)' 0x0000000000001fF3684f28c67538d4D0
 
 ## 4. Point the API at it
 
-In `apps/api/.env`: `FEE_WRAPPER_ADDRESS=<wrapper address>` and `QUOTE_SIGNER_PRIVATE_KEY=<fee signer key>`.
+In `apps/api/.env`: `FEE_WRAPPER_ADDRESS=<wrapper address>`, `QUOTE_SIGNER_PRIVATE_KEY=<fee signer key>` and `ZEROX_CHAIN_IDS=84532`.
+
+A local key only signs for testnet and local chain IDs (default 84532, 11155111, 421614, 31337; see `LOCAL_SIGNER_CHAIN_IDS`). The API refuses to start if a local key is set and `ZEROX_CHAIN_IDS` includes a mainnet (ADR 0004). For end-to-end tests against mainnet state, use an Anvil fork under chain ID 31337 with a throwaway key, never a mainnet chain ID.
+
+Limitation: the API signs only routes whose AllowanceHolder target is a trusted 0x Settler (`ZEROX_SETTLERS`, mainnets only), and 0x does not serve testnet or fork chain IDs. The signed-quote path therefore cannot yet run end to end on a testnet or a 31337 fork. That needs a reviewed fork mode (ADR 0004). Until then, test the wrapper on the testnet with `cast`, and test the API with its unit tests.
 
 ## Mainnet differences
 

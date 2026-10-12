@@ -1,29 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { QuoteRequest, Token } from '@ranvier/types';
+import type { QuoteRequest, TokenRef } from '@ranvier/types';
 import type { PriceOracle } from '../../ports/price-oracle.js';
+import { ProviderError } from '../../ports/provider-error.js';
 import fixture from './fixtures/zero-x-quote.json' with { type: 'json' };
-import {
-  NoLiquidityError,
-  UnexpectedRouterError,
-  ZeroXProvider,
-  ZEROX_ALLOWANCE_HOLDER,
-} from './zero-x.js';
+import { ZeroXProvider, ZEROX_ALLOWANCE_HOLDER } from './zero-x.js';
 
 const WRAPPER = '0x00000000000000000000000000000000000fee01';
 const USER = '0x00000000000000000000000000000000000000aa';
-const WETH: Token = {
-  chain: 'evm:1',
-  address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-  symbol: 'WETH',
-  decimals: 18,
-};
-const DAI: Token = {
-  chain: 'evm:1',
-  address: '0x6b175474e89094c44da98b954eedeac495271d0f',
-  symbol: 'DAI',
-  decimals: 18,
-};
-const ETH: Token = { chain: 'evm:1', address: 'native', symbol: 'ETH', decimals: 18 };
+const WETH: TokenRef = { chain: 'evm:1', address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' };
+const DAI: TokenRef = { chain: 'evm:1', address: '0x6b175474e89094c44da98b954eedeac495271d0f' };
+const ETH: TokenRef = { chain: 'evm:1', address: 'native' };
 
 const req: QuoteRequest = {
   sellToken: WETH,
@@ -33,10 +19,8 @@ const req: QuoteRequest = {
   slippageBps: 50,
 };
 
-/** $1 per whole token, so USD cents = amount / 10^16 for 18-decimal tokens. */
-const prices: PriceOracle = {
-  usdValue: async (token, amount) => (amount * 100n) / 10n ** BigInt(token.decimals),
-};
+/** $1 per whole 18-decimal token, so USD cents = amount / 10^16. */
+const prices: PriceOracle = { price: async () => ({ decimals: 18, usdE18: 10n ** 18n }) };
 
 function setup(body: unknown = fixture, status = 200) {
   const calls: { url: URL; headers: Headers }[] = [];
@@ -99,7 +83,7 @@ describe('ZeroXProvider.quote', () => {
       provider: '0x',
       buyAmount: 391197872355229192n,
       minBuyAmount: 389241882993453046n,
-      // The test oracle prices every token at $1, so USD cents are amount * 100 / 10^decimals.
+      // The test oracle prices every token at $1 with 18 decimals: cents = amount * 100 / 10^18.
       buyAmountUsd: (391197872355229192n * 100n) / 10n ** 18n,
       gasCostUsd: (3122680126329n * 100n) / 10n ** 18n,
       route: [
@@ -117,9 +101,9 @@ describe('ZeroXProvider.quote', () => {
   it('starts pricing before the 0x quote returns', async () => {
     const events: string[] = [];
     const slowPrices: PriceOracle = {
-      usdValue: async (token) => {
-        events.push(`price:${token.symbol}`);
-        return 0n;
+      price: async (token) => {
+        events.push(`price:${token.address}`);
+        return { decimals: 18, usdE18: 0n };
       },
     };
     const fetchStub = (async () => {
@@ -134,9 +118,22 @@ describe('ZeroXProvider.quote', () => {
       fetch: fetchStub,
     });
     await provider.quote(req, AbortSignal.timeout(1000));
-    // Warm-up lookups are issued first, alongside the request; exact lookups follow it.
-    expect(events.slice(0, 3).sort()).toEqual(['fetch', 'price:DAI', 'price:ETH']);
-    expect(events).toHaveLength(5);
+    // Both lookups are issued before the request, never with client-supplied decimals.
+    expect(events).toEqual([`price:${DAI.address}`, 'price:native', 'fetch']);
+  });
+
+  it('reports a pricing failure without an unhandled rejection', async () => {
+    const failing: PriceOracle = { price: async () => Promise.reject(new Error('oracle down')) };
+    const provider = new ZeroXProvider({
+      apiKey: 'k',
+      feeWrapper: WRAPPER,
+      chainIds: [1],
+      prices: failing,
+      fetch: (async () => new Response('{}', { status: 500 })) as typeof fetch,
+    });
+    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toMatchObject({
+      code: 'upstream_error',
+    });
   });
 
   it('uses the 0x sentinel for the native token', async () => {
@@ -154,9 +151,9 @@ describe('ZeroXProvider.quote', () => {
 
   it('reports no liquidity', async () => {
     const { provider } = setup({ liquidityAvailable: false, zid: '0x1' });
-    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toBeInstanceOf(
-      NoLiquidityError,
-    );
+    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toMatchObject({
+      code: 'no_liquidity',
+    });
   });
 
   it('refuses routes that target an unexpected contract', async () => {
@@ -164,17 +161,30 @@ describe('ZeroXProvider.quote', () => {
       ...fixture,
       transaction: { ...fixture.transaction, to: '0x000000000000000000000000000000000000dead' },
     });
-    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toBeInstanceOf(
-      UnexpectedRouterError,
-    );
+    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
   });
 
-  it('rejects HTTP errors and malformed responses', async () => {
-    await expect(setup({}, 500).provider.quote(req, AbortSignal.timeout(1000))).rejects.toThrow(
-      '0x returned 500',
-    );
+  it('rejects HTTP errors and malformed responses with stable codes', async () => {
+    const http = setup({}, 500).provider.quote(req, AbortSignal.timeout(1000));
+    await expect(http).rejects.toBeInstanceOf(ProviderError);
+    await expect(http).rejects.toMatchObject({ code: 'upstream_error' });
     await expect(
       setup({ ...fixture, buyAmount: '-1' }).provider.quote(req, AbortSignal.timeout(1000)),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('treats a non-JSON body as an invalid response', async () => {
+    const provider = new ZeroXProvider({
+      apiKey: 'k',
+      feeWrapper: WRAPPER,
+      chainIds: [1],
+      prices,
+      fetch: (async () => new Response('<html>', { status: 200 })) as typeof fetch,
+    });
+    await expect(provider.quote(req, AbortSignal.timeout(1000))).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
   });
 });

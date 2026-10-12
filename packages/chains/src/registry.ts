@@ -5,6 +5,8 @@ export interface ChainConfig {
   family: ChainFamily;
   name: string;
   nativeSymbol: string;
+  /** Decimals of the native coin (18 on EVM, 9 for SOL). Trusted source for native amounts. */
+  nativeDecimals: number;
   /** Wrapped native token address, used to detect wrap/unwrap swaps. */
   wrappedNative: string;
   /** Allowlisted major stablecoins (spec section 2: stablecoin fee). */
@@ -25,6 +27,7 @@ export const CHAINS: readonly ChainConfig[] = [
     family: 'evm',
     name: 'Ethereum',
     nativeSymbol: 'ETH',
+    nativeDecimals: 18,
     wrappedNative: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
     stablecoins: {
       USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
@@ -39,6 +42,7 @@ export const CHAINS: readonly ChainConfig[] = [
     family: 'evm',
     name: 'Base',
     nativeSymbol: 'ETH',
+    nativeDecimals: 18,
     wrappedNative: '0x4200000000000000000000000000000000000006',
     stablecoins: { USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' },
     explorer: 'https://basescan.org',
@@ -49,6 +53,7 @@ export const CHAINS: readonly ChainConfig[] = [
     family: 'evm',
     name: 'Arbitrum One',
     nativeSymbol: 'ETH',
+    nativeDecimals: 18,
     wrappedNative: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
     stablecoins: { USDC: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' },
     explorer: 'https://arbiscan.io',
@@ -59,6 +64,7 @@ export const CHAINS: readonly ChainConfig[] = [
     family: 'solana',
     name: 'Solana',
     nativeSymbol: 'SOL',
+    nativeDecimals: 9,
     wrappedNative: 'So11111111111111111111111111111111111111112',
     stablecoins: {
       USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -70,6 +76,25 @@ export const CHAINS: readonly ChainConfig[] = [
 ];
 
 export const NATIVE = 'native';
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+/** Base58 alphabet (no 0, O, I, l); Solana public keys encode to 32-44 characters. */
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/** Chain family from the key alone, so unregistered EVM chains still validate. */
+export function chainFamily(key: ChainKey): ChainFamily {
+  return key.startsWith('evm:') ? 'evm' : 'solana';
+}
+
+/** True for a well-formed account or contract address of the family (not `native`). */
+export function isValidAddress(family: ChainFamily, address: string): boolean {
+  return family === 'evm' ? EVM_ADDRESS.test(address) : SOLANA_ADDRESS.test(address);
+}
+
+/** True for `native` or a well-formed token address of the family. */
+export function isValidTokenAddress(family: ChainFamily, address: string): boolean {
+  return address === NATIVE || isValidAddress(family, address);
+}
 
 export function getChain(key: ChainKey): ChainConfig | undefined {
   return CHAINS.find((c) => c.key === key);

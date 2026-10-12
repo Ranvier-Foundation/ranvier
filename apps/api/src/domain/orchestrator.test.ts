@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderQuote, QuoteRequest } from '@ranvier/types';
+import { ProviderError } from '../ports/provider-error.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
-import { compareProviderQuotes, compareQuotes } from './orchestrator.js';
+import { compareProviderQuotes, compareQuotes, failureCode } from './orchestrator.js';
+import { UnsafeRouteError } from './route-safety.js';
 
 const req: QuoteRequest = {
-  sellToken: { chain: 'evm:1', address: 'native', symbol: 'ETH', decimals: 18 },
-  buyToken: {
-    chain: 'evm:1',
-    address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-    symbol: 'USDC',
-    decimals: 6,
-  },
+  sellToken: { chain: 'evm:1', address: 'native' },
+  buyToken: { chain: 'evm:1', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' },
   sellAmount: 10n ** 18n,
   taker: '0x0000000000000000000000000000000000000001',
   slippageBps: 50,
@@ -41,6 +38,8 @@ function provider(
   return { name, supports: () => supports, quote: (_r, signal) => run(signal) };
 }
 
+const accept = (q: ProviderQuote): ProviderQuote => q;
+
 describe('compareProviderQuotes', () => {
   it('picks the best net output, not the best gross output', async () => {
     const result = await compareProviderQuotes(
@@ -49,7 +48,7 @@ describe('compareProviderQuotes', () => {
         provider('net', async () => quote('net', 900n, 50n)),
       ],
       req,
-      { timeoutMs: 100 },
+      { timeoutMs: 100, vet: accept },
     );
     expect(result.best?.provider).toBe('net');
     expect(result.quotes.map((q) => q.provider)).toEqual(['net', 'gross']);
@@ -57,6 +56,7 @@ describe('compareProviderQuotes', () => {
 
   it('isolates failures and timeouts', async () => {
     let aborted = false;
+    const logged: [string, unknown][] = [];
     const result = await compareProviderQuotes(
       [
         provider('ok', async () => quote('ok', 100n, 1n)),
@@ -70,14 +70,19 @@ describe('compareProviderQuotes', () => {
         }),
       ],
       req,
-      { timeoutMs: 20 },
+      { timeoutMs: 20, vet: accept, onFailure: (f, err) => logged.push([f.provider, err]) },
     );
     expect(result.best?.provider).toBe('ok');
+    // Clients get stable codes only: no upstream message is copied into the result.
     expect(result.failures).toEqual([
-      { provider: 'broken', error: 'error', message: 'boom' },
-      { provider: 'rejects-non-error', error: 'error', message: 'nope' },
-      { provider: 'slow', error: 'timeout', message: 'timed out after 20ms' },
+      { provider: 'broken', error: 'upstream_error' },
+      { provider: 'rejects-non-error', error: 'upstream_error' },
+      { provider: 'slow', error: 'timeout' },
     ]);
+    expect(JSON.stringify(result.failures)).not.toContain('boom');
+    // The detail is still available to the server log.
+    expect(logged.map(([p]) => p)).toEqual(['broken', 'rejects-non-error', 'slow']);
+    expect((logged[0]![1] as Error).message).toBe('boom');
     expect(aborted).toBe(true);
   });
 
@@ -85,18 +90,50 @@ describe('compareProviderQuotes', () => {
     const result = await compareProviderQuotes(
       [provider('no', async () => quote('no', 1n, 0n), false)],
       req,
-      { timeoutMs: 10 },
+      { timeoutMs: 10, vet: accept },
     );
     expect(result).toEqual({ best: undefined, quotes: [], failures: [] });
   });
 
-  it('rejects quotes whose minimum exceeds their output', async () => {
-    const bad = { ...quote('bad', 100n, 0n), minBuyAmount: 101n };
-    const result = await compareProviderQuotes([provider('bad', async () => bad)], req, {
-      timeoutMs: 10,
-    });
-    expect(result.best).toBeUndefined();
-    expect(result.failures[0]?.message).toBe('minBuyAmount exceeds buyAmount');
+  it('refuses quotes the vetting step rejects, with a stable code', async () => {
+    const result = await compareProviderQuotes(
+      [
+        provider('unsafe', async () => quote('unsafe', 100n, 0n)),
+        provider('safe', async () => quote('safe', 50n, 0n)),
+      ],
+      req,
+      {
+        timeoutMs: 10,
+        vet: (q) => {
+          if (q.provider === 'unsafe') throw new UnsafeRouteError('unknown_target');
+          return q;
+        },
+      },
+    );
+    expect(result.best?.provider).toBe('safe');
+    expect(result.failures).toEqual([{ provider: 'unsafe', error: 'rejected_unsafe_route' }]);
+  });
+
+  it('passes provider error codes through', async () => {
+    const result = await compareProviderQuotes(
+      [
+        provider('dry', async () => Promise.reject(new ProviderError('no_liquidity', 'x'))),
+        provider('bad', async () => Promise.reject(new ProviderError('invalid_response', 'y'))),
+      ],
+      req,
+      { timeoutMs: 10, vet: accept },
+    );
+    expect(result.failures).toEqual([
+      { provider: 'dry', error: 'no_liquidity' },
+      { provider: 'bad', error: 'invalid_response' },
+    ]);
+  });
+});
+
+describe('failureCode', () => {
+  it('maps unknown errors to upstream_error', () => {
+    expect(failureCode(new Error('secret detail'))).toBe('upstream_error');
+    expect(failureCode('string')).toBe('upstream_error');
   });
 });
 

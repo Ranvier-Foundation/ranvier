@@ -1,17 +1,16 @@
-import { getChain, NATIVE } from '@ranvier/chains';
-import type { ProviderQuote, QuoteRequest, Token } from '@ranvier/types';
+import { NATIVE } from '@ranvier/chains';
+import type { ProviderQuote, QuoteRequest, TokenRef } from '@ranvier/types';
 import { z } from 'zod';
+import { usdCents } from '../../domain/usd.js';
 import type { PriceOracle } from '../../ports/price-oracle.js';
+import { ProviderError } from '../../ports/provider-error.js';
 import type { QuoteProvider } from '../../ports/quote-provider.js';
+import { ZEROX_ALLOWANCE_HOLDER } from '../../trusted-routers.js';
 
-/** 0x represents the native token with this sentinel address. */
+export { ZEROX_ALLOWANCE_HOLDER };
+
+/** 0x represents the native token with this sentinel address in API parameters. */
 const ZEROX_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-
-/**
- * 0x AllowanceHolder on Cancun-enabled chains. The fee wrapper approves and calls this
- * contract, so it must also be on the wrapper's on-chain router allowlist.
- */
-export const ZEROX_ALLOWANCE_HOLDER = '0x0000000000001ff3684f28c67538d4d072c22734';
 
 const uint = z.string().regex(/^\d+$/).transform(BigInt);
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -41,9 +40,6 @@ const quoteSchema = z.discriminatedUnion('liquidityAvailable', [
   }),
 ]);
 
-export class NoLiquidityError extends Error {}
-export class UnexpectedRouterError extends Error {}
-
 export interface ZeroXOptions {
   apiKey: string;
   /** Fee wrapper address: the taker that holds the input when 0x's calldata runs. */
@@ -57,12 +53,12 @@ export interface ZeroXOptions {
   fetch?: typeof fetch;
 }
 
-function chainIdOf(token: Token): number | undefined {
+function chainIdOf(token: TokenRef): number | undefined {
   const match = /^evm:(\d+)$/.exec(token.chain);
   return match ? Number(match[1]) : undefined;
 }
 
-function toZeroXToken(token: Token): string {
+function toZeroXToken(token: TokenRef): string {
   return token.address === NATIVE ? ZEROX_NATIVE : token.address;
 }
 
@@ -94,19 +90,14 @@ export class ZeroXProvider implements QuoteProvider {
   }
 
   async quote(req: QuoteRequest, signal: AbortSignal): Promise<ProviderQuote> {
-    const chain = getChain(req.sellToken.chain);
-    const native: Token = {
-      chain: req.sellToken.chain,
-      address: NATIVE,
-      symbol: chain?.nativeSymbol ?? 'ETH',
-      decimals: 18,
-    };
-    // Start pricing now so it overlaps the quote request instead of following it. The
-    // oracle caches, so the exact-amount lookups below are then served without a round trip.
-    const warm = Promise.allSettled([
-      this.opts.prices.usdValue(req.buyToken, 10n ** BigInt(req.buyToken.decimals), signal),
-      this.opts.prices.usdValue(native, 10n ** 18n, signal),
+    const native: TokenRef = { chain: req.sellToken.chain, address: NATIVE };
+    // Start pricing now so it overlaps the quote request instead of following it.
+    const pricing = Promise.all([
+      this.opts.prices.price(req.buyToken, signal),
+      this.opts.prices.price(native, signal),
     ]);
+    // Settled later; this only stops an early rejection being reported as unhandled.
+    pricing.catch(() => undefined);
 
     const params = new URLSearchParams({
       chainId: String(chainIdOf(req.sellToken)),
@@ -122,26 +113,23 @@ export class ZeroXProvider implements QuoteProvider {
       headers: { '0x-api-key': this.opts.apiKey, '0x-version': 'v2' },
       signal,
     });
-    if (!res.ok) throw new Error(`0x returned ${res.status}`);
+    if (!res.ok) throw new ProviderError('upstream_error', `0x returned ${res.status}`);
 
-    const body = quoteSchema.parse(await res.json());
-    if (!body.liquidityAvailable) throw new NoLiquidityError('no liquidity');
+    const parsed = quoteSchema.safeParse(await res.json().catch(() => undefined));
+    if (!parsed.success) throw new ProviderError('invalid_response', '0x response failed schema');
+    const body = parsed.data;
+    if (!body.liquidityAvailable) throw new ProviderError('no_liquidity', 'no liquidity');
     if (!this.allowedRouters.has(body.transaction.to.toLowerCase())) {
-      throw new UnexpectedRouterError(`unexpected router ${body.transaction.to}`);
+      throw new ProviderError('invalid_response', `unexpected router ${body.transaction.to}`);
     }
 
-    await warm;
-    const [buyAmountUsd, gasCostUsd] = await Promise.all([
-      this.opts.prices.usdValue(req.buyToken, body.buyAmount, signal),
-      this.opts.prices.usdValue(native, body.totalNetworkFee ?? 0n, signal),
-    ]);
-
+    const [buyPrice, nativePrice] = await pricing;
     return {
       provider: this.name,
       buyAmount: body.buyAmount,
       minBuyAmount: body.minBuyAmount,
-      buyAmountUsd,
-      gasCostUsd,
+      buyAmountUsd: usdCents(buyPrice, body.buyAmount),
+      gasCostUsd: usdCents(nativePrice, body.totalNetworkFee ?? 0n),
       route: body.route.fills.map((f) => ({
         protocol: f.source,
         from: f.from,

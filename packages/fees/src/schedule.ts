@@ -1,5 +1,5 @@
 import { isStablecoin, isWrappedNative, NATIVE } from '@ranvier/chains';
-import type { FeeQuote, FeeReason, Token, UsdCents } from '@ranvier/types';
+import type { FeeQuote, FeeReason, TokenRef, UsdCents } from '@ranvier/types';
 
 /** Must match MAX_FEE_BPS in contracts/src/FeeWrapper.sol. */
 export const MAX_FEE_BPS = 30;
@@ -10,8 +10,8 @@ const TIER_1_UPPER: UsdCents = 10_000_00n;
 const TIER_2_UPPER: UsdCents = 100_000_00n;
 
 export interface FeeInput {
-  sellToken: Token;
-  buyToken: Token;
+  sellToken: TokenRef;
+  buyToken: TokenRef;
   sellAmount: bigint;
   /** USD value of `sellAmount` at quote time. */
   usdValue: UsdCents;
@@ -23,7 +23,7 @@ export interface FeeInput {
  * True when one side is the chain's native coin and the other is that same chain's
  * wrapped native token (e.g. ETH <-> WETH on one chain). Free by the fee schedule.
  */
-export function isWrapOrUnwrap(a: Token, b: Token): boolean {
+export function isWrapOrUnwrap(a: TokenRef, b: TokenRef): boolean {
   if (a.chain !== b.chain) return false;
   const aNative = a.address === NATIVE;
   const bNative = b.address === NATIVE;
@@ -33,7 +33,7 @@ export function isWrapOrUnwrap(a: Token, b: Token): boolean {
   );
 }
 
-function isStablePair(a: Token, b: Token): boolean {
+function isStablePair(a: TokenRef, b: TokenRef): boolean {
   return isStablecoin(a.chain, a.address) && isStablecoin(b.chain, b.address);
 }
 

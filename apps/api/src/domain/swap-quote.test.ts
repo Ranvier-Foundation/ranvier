@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { FeeQuote, ProviderQuote, QuoteRequest } from '@ranvier/types';
 import { decodeFunctionData, keccak256, padHex, recoverTypedDataAddress, zeroAddress } from 'viem';
-import { LocalKeySigner } from '../adapters/signers/local-key.js';
+import {
+  assertLocalSigningChains,
+  LocalKeySigner,
+  NEVER_LOCAL_CHAINS,
+} from '../adapters/signers/local-key.js';
+import type { VettedRoute } from './route-safety.js';
 import {
   buildSignedSwap,
   FEE_WRAPPER_ABI,
@@ -32,7 +37,7 @@ const goldenQuote: SwapQuote = {
   deadline: 1_800_000_000n,
 };
 
-const signer = new LocalKeySigner(padHex('0xa11ce', { size: 32 }), 'test');
+const signer = new LocalKeySigner(padHex('0xa11ce', { size: 32 }), { nodeEnv: 'test' });
 
 describe('EIP-712 compatibility with FeeWrapper.sol', () => {
   it('produces the digest the contract computes', () => {
@@ -52,19 +57,20 @@ describe('EIP-712 compatibility with FeeWrapper.sol', () => {
 });
 
 describe('buildSignedSwap', () => {
+  // Base Sepolia: a local key may sign for testnets only.
   const USDC = {
-    chain: 'evm:8453' as const,
+    chain: 'evm:84532' as const,
     address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
     symbol: 'USDC',
     decimals: 6,
   };
   const WETH = {
-    chain: 'evm:8453' as const,
+    chain: 'evm:84532' as const,
     address: '0x4200000000000000000000000000000000000006',
     symbol: 'WETH',
     decimals: 18,
   };
-  const ETH = { chain: 'evm:8453' as const, address: 'native', symbol: 'ETH', decimals: 18 };
+  const ETH = { chain: 'evm:84532' as const, address: 'native' };
   const request: QuoteRequest = {
     sellToken: USDC,
     buyToken: WETH,
@@ -73,7 +79,8 @@ describe('buildSignedSwap', () => {
     slippageBps: 50,
   };
   const fee: FeeQuote = { bps: 20, reason: 'tier-under-10k', amount: 2_000_000n, waivedUsd: 0n };
-  const route: ProviderQuote = {
+  // Vetting is covered in route-safety.test.ts; here the route stands in for a vetted one.
+  const unvetted: ProviderQuote = {
     provider: '0x',
     buyAmount: 4n * 10n ** 17n,
     minBuyAmount: 39n * 10n ** 16n,
@@ -82,6 +89,7 @@ describe('buildSignedSwap', () => {
     route: [],
     tx: { to: '0x0000000000001ff3684f28c67538d4d072c22734', data: '0xabcdef', value: 0n },
   };
+  const route = unvetted as VettedRoute;
   const base = {
     request,
     fee,
@@ -107,7 +115,7 @@ describe('buildSignedSwap', () => {
       deadline: 1_800_000_060n,
     });
     const recovered = await recoverTypedDataAddress({
-      ...typedData(swap.quote, 8453, GOLDEN.wrapper),
+      ...typedData(swap.quote, 84532, GOLDEN.wrapper),
       signature: swap.signature,
     } as Parameters<typeof recoverTypedDataAddress>[0]);
     expect(recovered).toBe(signer.address);
@@ -135,6 +143,22 @@ describe('buildSignedSwap', () => {
     await expect(
       buildSignedSwap({
         ...base,
+        request: {
+          ...request,
+          sellToken: { ...USDC, chain: 'evm:8453' },
+          buyToken: { ...WETH, chain: 'evm:8453' },
+        },
+      }),
+    ).rejects.toThrow('signer refuses chain 8453');
+    await expect(
+      buildSignedSwap({
+        ...base,
+        request: { ...request, sellToken: { ...USDC, chain: 'evm:1' } },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      buildSignedSwap({
+        ...base,
         request: { ...request, sellToken: { ...USDC, chain: 'solana:mainnet' } },
       }),
     ).rejects.toThrow();
@@ -142,7 +166,56 @@ describe('buildSignedSwap', () => {
 });
 
 describe('LocalKeySigner', () => {
+  const key = padHex('0x1', { size: 32 });
+  const typed = (chainId: number | undefined) => ({
+    ...typedData(goldenQuote, chainId ?? 1, GOLDEN.wrapper),
+    domain: { ...typedData(goldenQuote, 1, GOLDEN.wrapper).domain, chainId },
+  });
+
   it('refuses to run in production', () => {
-    expect(() => new LocalKeySigner(padHex('0x1', { size: 32 }), 'production')).toThrow('KMS');
+    expect(() => new LocalKeySigner(key, { nodeEnv: 'production' })).toThrow('KMS');
+  });
+
+  it('reads NODE_ENV when not given explicitly', () => {
+    const before = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => new LocalKeySigner(key)).toThrow('KMS');
+    } finally {
+      process.env.NODE_ENV = before;
+    }
+  });
+
+  it('signs for testnets and local chains by default', () => {
+    const s = new LocalKeySigner(key, { nodeEnv: 'test' });
+    for (const id of [84532, 11155111, 421614, 31337]) expect(s.canSign(id)).toBe(true);
+  });
+
+  it('never signs for a mainnet, whatever the configuration', async () => {
+    const s = new LocalKeySigner(key, { nodeEnv: 'test' });
+    for (const id of [1, 10, 56, 137, 8453, 42161, 43114]) {
+      expect(NEVER_LOCAL_CHAINS.has(id)).toBe(true);
+      expect(s.canSign(id)).toBe(false);
+      await expect(s.signTypedData(typed(id))).rejects.toThrow(`refuses chain ${id}`);
+    }
+    expect(() => new LocalKeySigner(key, { nodeEnv: 'test', allowedChainIds: [31337, 1] })).toThrow(
+      'mainnet chain(s) 1',
+    );
+  });
+
+  it('refuses chains outside its allowlist and typed data without a chain', async () => {
+    const s = new LocalKeySigner(key, { nodeEnv: 'test', allowedChainIds: [31337] });
+    expect(s.canSign(84532)).toBe(false);
+    await expect(s.signTypedData(typed(84532))).rejects.toThrow('refuses chain 84532');
+    await expect(s.signTypedData(typed(undefined))).rejects.toThrow('refuses chain undefined');
+    await expect(s.signTypedData(typed(31337))).resolves.toMatch(/^0x[0-9a-f]{130}$/);
+  });
+
+  it('fails startup when configured signing chains include a refused chain', () => {
+    const s = new LocalKeySigner(key, { nodeEnv: 'test' });
+    expect(() => assertLocalSigningChains([84532, 31337], s)).not.toThrow();
+    expect(() => assertLocalSigningChains([1, 8453, 42161], s)).toThrow(
+      'ZEROX_CHAIN_IDS includes chain(s) 1, 8453, 42161',
+    );
   });
 });
