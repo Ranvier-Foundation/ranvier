@@ -6,5 +6,8 @@ import type { Hex, TypedDataDefinition } from 'viem';
  */
 export interface QuoteSigner {
   readonly address: Hex;
+  /** False for chains this signer must never sign for (e.g. mainnets for a local key). */
+  canSign(chainId: number): boolean;
+  /** Throws for a chain `canSign` refuses. */
   signTypedData(typedData: TypedDataDefinition): Promise<Hex>;
 }

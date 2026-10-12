@@ -1,5 +1,5 @@
 import { isStablecoin, isWrappedNative, NATIVE } from '@ranvier/chains';
-import type { FeeQuote, FeeReason, Token, UsdCents } from '@ranvier/types';
+import type { FeeQuote, FeeReason, TokenRef, UsdCents } from '@ranvier/types';
 
 /** Must match MAX_FEE_BPS in contracts/src/FeeWrapper.sol. */
 export const MAX_FEE_BPS = 30;
@@ -10,8 +10,8 @@ const TIER_1_UPPER: UsdCents = 10_000_00n;
 const TIER_2_UPPER: UsdCents = 100_000_00n;
 
 export interface FeeInput {
-  sellToken: Token;
-  buyToken: Token;
+  sellToken: TokenRef;
+  buyToken: TokenRef;
   sellAmount: bigint;
   /** USD value of `sellAmount` at quote time. */
   usdValue: UsdCents;
@@ -23,7 +23,7 @@ export interface FeeInput {
  * True when one side is the chain's native coin and the other is that same chain's
  * wrapped native token (e.g. ETH <-> WETH on one chain). Free by the fee schedule.
  */
-export function isWrapOrUnwrap(a: Token, b: Token): boolean {
+export function isWrapOrUnwrap(a: TokenRef, b: TokenRef): boolean {
   if (a.chain !== b.chain) return false;
   const aNative = a.address === NATIVE;
   const bNative = b.address === NATIVE;
@@ -33,7 +33,7 @@ export function isWrapOrUnwrap(a: Token, b: Token): boolean {
   );
 }
 
-function isStablePair(a: Token, b: Token): boolean {
+function isStablePair(a: TokenRef, b: TokenRef): boolean {
   return isStablecoin(a.chain, a.address) && isStablecoin(b.chain, b.address);
 }
 
@@ -66,7 +66,10 @@ export function feeAmount(sellAmount: bigint, bps: number): bigint {
 /**
  * Fee for a swap. On a wallet's first swap the first $1,000 is free and only the
  * part above it pays the base rate; the rate tier still follows the full swap size.
- * Every division rounds down, in the user's favour.
+ * Every division here rounds down, in the user's favour. The USD value that picks the tier is
+ * itself rounded down to whole cents by the caller; since cheaper tiers need a larger value,
+ * that can only put a swap within one cent above a boundary in the dearer tier, never the
+ * cheaper one. On a first swap it can waive under one cent more than $1,000 (ADR 0004).
  */
 export function quoteFee(input: FeeInput): FeeQuote {
   const { bps, reason } = feeRate(input);

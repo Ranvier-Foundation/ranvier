@@ -4,10 +4,18 @@ export type ChainFamily = 'evm' | 'solana';
 /** EVM chains use their numeric chain ID; non-EVM chains use a string key. */
 export type ChainKey = `evm:${number}` | 'solana:mainnet';
 
-export interface Token {
+/**
+ * A token as a client names it: chain and address only. Everything used in money maths
+ * (decimals, price) comes from a trusted source, never from the client.
+ */
+export interface TokenRef {
   chain: ChainKey;
-  /** Contract address (EVM), mint address (Solana), or `native`. */
+  /** Contract address (EVM, lowercase once validated), mint address (Solana), or `native`. */
   address: string;
+}
+
+/** Token metadata for display. `decimals` here is never taken from a client request. */
+export interface Token extends TokenRef {
   symbol: string;
   decimals: number;
 }
@@ -34,8 +42,8 @@ export interface FeeQuote {
 }
 
 export interface QuoteRequest {
-  sellToken: Token;
-  buyToken: Token;
+  sellToken: TokenRef;
+  buyToken: TokenRef;
   /** Input amount in base units, before the platform fee. */
   sellAmount: bigint;
   taker: string;
