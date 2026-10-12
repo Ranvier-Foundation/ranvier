@@ -77,7 +77,7 @@ test.describe('keyboard', () => {
       if (info.id === 'pay') {
         // Inputs show a 1.5px inset primary ring instead of the offset outline.
         expect(['1px', '1.5px']).toContain(info.width);
-        expect(info.offset).toBe(info.width === '1.5px' ? '-1.5px' : '-1.5px');
+        expect(info.offset).toBe(`-${info.width}`);
         expect(info.colour).toBe(RGB.primary);
       } else {
         expect(info.width).toBe('2px');

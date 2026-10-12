@@ -105,7 +105,7 @@ Web screens are designed at 1440 px and are fluid; mobile screens at 390 × 844.
 | Two-pane screens                                 | Flex row that wraps: main `flex: 999 1 560px`, side `flex: 1 1 320px`                  |
 | Modals                                           | Max 520 to 640 px, top-aligned 72 to 96 px from the top, over the scrim                |
 
-The web header is one line, always: logo left, text nav centred, controls right; nothing wraps and every control is 44 px tall. It is a three-column grid `minmax(0, 1fr) auto minmax(0, 1fr)` with a 20 px gap and 16 × 20 px padding; nav items have 0 × 14 px padding with a 4 px gap, and the right group has a 6 px gap. Below 1200 px the nav collapses into the "more" menu; below 640 px the network pill shows its coin only and the bell moves into the more menu.
+The web header is one line, always: logo left, text nav centred, controls right; nothing wraps and every control is 44 px tall. It is a three-column grid `minmax(0, 1fr) auto minmax(0, 1fr)` with a 20 px gap and 16 × 20 px padding; nav items have 0 × 14 px padding with a 4 px gap, and the right group has a 6 px gap. Below 1200 px the nav collapses into the "more" menu; below 640 px the network pill and the bell move into the more menu. The side columns are `minmax(max-content, 1fr)`: equal (nav exactly centred) whenever there is room, as on the canvas, and growing to their content otherwise.
 
 Mobile has no fake status bar. Header 68 px. The bottom nav is a floating white pill with a 1 px `line` border, centred 24 px above the bottom edge, 48 px items, the active item expanded to icon plus label in `primary`. Primary actions on flow screens dock above the nav.
 

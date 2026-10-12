@@ -62,7 +62,10 @@
     'zero' 1;
 }
 
-/* Header grid: logo left, nav centred, controls right. */
+/*
+ * Header grid: logo left, nav centred, controls right. Equal side columns as drawn; they grow
+ * to their content below the width where the canvas layout would need them to shrink.
+ */
 @utility grid-cols-header {
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
 }

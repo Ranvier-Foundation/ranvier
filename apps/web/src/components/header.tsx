@@ -47,14 +47,14 @@ function Chevron() {
   );
 }
 
-function NetworkPill({ network }: { network: ChainKey | 'all' }) {
+function NetworkPill({ network, inMenu = false }: { network: ChainKey | 'all'; inMenu?: boolean }) {
   const chain = network === 'all' ? undefined : (getChain(network) ?? defaultNetwork());
   const name = chain ? chain.name : t('header.network.all');
   return (
     <button
       type="button"
       aria-label={t('header.network.label', { network: name })}
-      className={`flex h-control items-center gap-8 rounded-pill bg-pill pr-14 text-body font-medium text-ink transition hover:brightness-95 ${chain ? 'pl-7' : 'pl-8'}`}
+      className={`flex h-control items-center gap-8 rounded-pill bg-pill pr-14 text-body font-medium text-ink transition hover:brightness-95 ${chain ? 'pl-7' : 'pl-8'} ${inMenu ? 'w-full narrow:hidden' : 'max-narrow:hidden'}`}
     >
       {chain ? (
         <span
@@ -76,10 +76,8 @@ function NetworkPill({ network }: { network: ChainKey | 'all' }) {
           ))}
         </svg>
       )}
-      <span className="max-narrow:sr-only">{name}</span>
-      <span className="max-narrow:hidden">
-        <Chevron />
-      </span>
+      <span>{name}</span>
+      <Chevron />
     </button>
   );
 }
@@ -114,7 +112,7 @@ export function Header({ active = 'swap', wallet, network, activityCount = 0 }: 
         <Link
           href="/"
           aria-label={t('header.home.label')}
-          className="flex items-center text-ink no-underline"
+          className="flex h-control items-center text-ink no-underline"
         >
           <Logo size={32} />
         </Link>
@@ -173,6 +171,7 @@ export function Header({ active = 'swap', wallet, network, activityCount = 0 }: 
               />
             ))}
           </nav>
+          <NetworkPill network={selected} inMenu />
           <Link
             href={ROUTES.notifications}
             className="flex h-control w-full items-center rounded-pill px-14 text-lead transition hover:bg-hover narrow:hidden"
