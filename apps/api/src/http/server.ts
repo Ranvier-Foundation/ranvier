@@ -60,7 +60,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }
 
     const request = parsed.data;
-    const timeoutMs = deps.providerTimeoutMs ?? 700;
+    const timeoutMs = deps.providerTimeoutMs ?? 2500;
     let usdValue: bigint;
     let hasSwapped: boolean;
     try {

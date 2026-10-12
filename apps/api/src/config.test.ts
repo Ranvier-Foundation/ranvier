@@ -6,7 +6,7 @@ describe('loadConfig', () => {
     expect(loadConfig({})).toMatchObject({
       PORT: 4000,
       HOST: '127.0.0.1',
-      PROVIDER_TIMEOUT_MS: 700,
+      PROVIDER_TIMEOUT_MS: 2500,
       ZEROX_CHAIN_IDS: [1, 8453, 42161],
     });
   });

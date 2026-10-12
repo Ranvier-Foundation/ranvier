@@ -5,7 +5,7 @@ const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   HOST: z.string().default('127.0.0.1'),
-  PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(700),
+  PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(2500),
   /** Fee wrapper address (same on every EVM chain via CREATE2). */
   FEE_WRAPPER_ADDRESS: address.optional(),
   ZEROX_API_KEY: z.string().min(1).optional(),

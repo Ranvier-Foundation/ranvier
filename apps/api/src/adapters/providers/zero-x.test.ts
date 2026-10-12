@@ -114,6 +114,31 @@ describe('ZeroXProvider.quote', () => {
     });
   });
 
+  it('starts pricing before the 0x quote returns', async () => {
+    const events: string[] = [];
+    const slowPrices: PriceOracle = {
+      usdValue: async (token) => {
+        events.push(`price:${token.symbol}`);
+        return 0n;
+      },
+    };
+    const fetchStub = (async () => {
+      events.push('fetch');
+      return new Response(JSON.stringify(fixture), { status: 200 });
+    }) as typeof fetch;
+    const provider = new ZeroXProvider({
+      apiKey: 'k',
+      feeWrapper: WRAPPER,
+      chainIds: [1],
+      prices: slowPrices,
+      fetch: fetchStub,
+    });
+    await provider.quote(req, AbortSignal.timeout(1000));
+    // Warm-up lookups are issued first, alongside the request; exact lookups follow it.
+    expect(events.slice(0, 3).sort()).toEqual(['fetch', 'price:DAI', 'price:ETH']);
+    expect(events).toHaveLength(5);
+  });
+
   it('uses the 0x sentinel for the native token', async () => {
     const { provider, calls } = setup();
     await provider.quote({ ...req, sellToken: ETH }, AbortSignal.timeout(1000));
