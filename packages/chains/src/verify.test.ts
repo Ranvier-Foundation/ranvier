@@ -1,11 +1,19 @@
 import type { ChainKey } from '@ranvier/types';
 import { describe, expect, it } from 'vitest';
-import { ARB_STANDARD_GATEWAY, OP_STANDARD_BRIDGE, type CuratedToken } from './tokens.js';
+import {
+  ARB_DAI_GATEWAY,
+  ARB_STANDARD_GATEWAY,
+  OP_STANDARD_BRIDGE,
+  type CuratedToken,
+} from './tokens.js';
 import {
   decodeAddress,
   decodeString,
   decodeUint,
   diffToken,
+  errText,
+  resolveRpcUrl,
+  scrubUrls,
   SELECTORS,
   verifyTokens,
   type LlamaCoin,
@@ -52,6 +60,15 @@ const USDT0: CuratedToken = {
   name: 'USD₮0',
   decimals: 6,
 };
+const ARB_DAI: CuratedToken = {
+  chain: 'evm:42161',
+  address: '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',
+  symbol: 'DAI',
+  name: 'Dai Stablecoin',
+  decimals: 18,
+  tags: ['stablecoin', 'bridged'],
+  bridgeExemption: { reason: 'custom gateway', ward: ARB_DAI_GATEWAY },
+};
 const NATIVE: CuratedToken = {
   chain: 'evm:1',
   address: 'native',
@@ -61,7 +78,7 @@ const NATIVE: CuratedToken = {
 };
 
 /** A copy of `o` without `key`. */
-function omit(o: Observed, key: 'onchain' | 'llama' | 'bridge'): Observed {
+function omit(o: Observed, key: 'onchain' | 'llama' | 'bridge' | 'ward'): Observed {
   const copy = { ...o };
   Reflect.deleteProperty(copy, key);
   return copy;
@@ -71,6 +88,7 @@ const good = (t: CuratedToken): Observed => ({
   onchain: { symbol: t.onchainSymbol ?? t.symbol, name: t.name, decimals: t.decimals },
   llama: { symbol: t.symbol, decimals: t.decimals, confidence: 0.99 },
   ...(t.bridge ? { bridge: { l1Address: t.bridge.l1Address, gateway: t.bridge.gateway } } : {}),
+  ...(t.bridgeExemption ? { ward: 1n } : {}),
   errors: [],
 });
 
@@ -137,6 +155,17 @@ describe('diffToken', () => {
     expect(diffToken(ARB_UNI, omit(good(ARB_UNI), 'bridge'))).toEqual(['bridge link not read']);
   });
 
+  it('checks the gateway ward of a token with a bridge exemption', () => {
+    expect(diffToken(ARB_DAI, good(ARB_DAI))).toEqual([]);
+    expect(diffToken(ARB_DAI, { ...good(ARB_DAI), ward: 0n })).toEqual([
+      `wards(${ARB_DAI_GATEWAY}) is 0, expected 1`,
+    ]);
+    expect(diffToken(ARB_DAI, omit(good(ARB_DAI), 'ward'))).toEqual(['gateway ward not read']);
+    expect(diffToken(ARB_DAI, { ...omit(good(ARB_DAI), 'ward'), errors: ['ward: x'] })).toEqual([
+      'ward: x',
+    ]);
+  });
+
   it('never passes a token that could not be read', () => {
     const none = omit(good(USDC), 'onchain');
     expect(diffToken(USDC, none)).toEqual(['no on-chain metadata']);
@@ -147,14 +176,28 @@ describe('diffToken', () => {
 });
 
 /** A fake chain: per (chain, address, selector) results, or a thrown error. */
+const CHAIN_IDS: Readonly<Record<string, string>> = {
+  'evm:1': '0x1',
+  'evm:8453': '0x2105',
+  'evm:42161': '0xa4b1',
+};
+
 function fakeDeps(
   results: Record<string, string>,
   coins: Record<string, LlamaCoin>,
   llamaFails = false,
+  chainIds: Readonly<Record<string, string | Error>> = CHAIN_IDS,
 ): VerifyDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
+    chainId: async (chain: ChainKey) => {
+      calls.push(`${chain}|eth_chainId`);
+      const id = chainIds[chain];
+      if (id === undefined) throw new Error('no chain ID');
+      if (id instanceof Error) throw id;
+      return id;
+    },
     ethCall: async (chain: ChainKey, to: string, data: string) => {
       const key = `${chain}|${to}|${data}`;
       calls.push(key);
@@ -168,6 +211,8 @@ function fakeDeps(
     },
   };
 }
+
+const wardsCall = (ward: string): string => `${SELECTORS.wards}${pad(ward.slice(2))}`;
 
 function chainResults(t: CuratedToken, over: Partial<Record<string, string>> = {}) {
   const k = (sel: string) => `${t.chain}|${t.address}|${sel}`;
@@ -183,6 +228,9 @@ function chainResults(t: CuratedToken, over: Partial<Record<string, string>> = {
   if (t.bridge?.kind === 'arbitrum') {
     r[k(SELECTORS.l1Address)] = encAddress(t.bridge.l1Address);
     r[k(SELECTORS.l2Gateway)] = encAddress(t.bridge.gateway);
+  }
+  if (t.bridgeExemption) {
+    r[k(wardsCall(t.bridgeExemption.ward))] = encUint(1);
   }
   for (const [sel, v] of Object.entries(over)) {
     if (v === undefined) Reflect.deleteProperty(r, k(sel));
@@ -216,6 +264,81 @@ describe('verifyTokens', () => {
     expect(deps.calls.some((c) => c.endsWith(SELECTORS.remoteToken))).toBe(true);
     expect(deps.calls.some((c) => c.endsWith(SELECTORS.l1Address))).toBe(true);
     expect(deps.calls.some((c) => c.includes('native'))).toBe(false);
+    // One chain ID check per chain, before any eth_call on it.
+    expect(deps.calls.filter((c) => c.endsWith('|eth_chainId'))).toEqual([
+      'evm:1|eth_chainId',
+      'evm:8453|eth_chainId',
+      'evm:42161|eth_chainId',
+    ]);
+    expect(deps.calls.slice(0, 3).every((c) => c.endsWith('|eth_chainId'))).toBe(true);
+  });
+
+  it('fails every token of a chain whose RPC reports another chain ID, without reading it', async () => {
+    const CBBTC = '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf';
+    const cbbtc = (chain: ChainKey): CuratedToken => ({
+      chain,
+      address: CBBTC,
+      symbol: 'cbBTC',
+      name: 'Coinbase Wrapped BTC',
+      decimals: 8,
+    });
+    const [eth, base, arb] = [cbbtc('evm:1'), cbbtc('evm:8453'), cbbtc('evm:42161')];
+    // The Arbitrum RPC actually points at Base, where cbBTC has the same address and metadata.
+    const deps = fakeDeps(
+      { ...chainResults(eth), ...chainResults(base), ...chainResults(arb) },
+      {
+        [`ethereum:${CBBTC}`]: coin(eth),
+        [`base:${CBBTC}`]: coin(base),
+        [`arbitrum:${CBBTC}`]: coin(arb),
+      },
+      false,
+      { ...CHAIN_IDS, 'evm:42161': '0x2105' },
+    );
+    const reports = await verifyTokens([eth, base, arb, ARB_UNI], deps);
+    const mismatch = 'RPC chain ID does not match evm:42161; check VERIFY_RPC_EVM_42161';
+    expect(reports.map((r) => [r.token.chain, r.problems])).toEqual([
+      ['evm:1', []],
+      ['evm:8453', []],
+      ['evm:42161', [mismatch]],
+      ['evm:42161', [mismatch]],
+    ]);
+    expect(deps.calls.filter((c) => c.startsWith('evm:42161|0x'))).toEqual([]);
+    expect(deps.calls.filter((c) => c === 'evm:42161|eth_chainId')).toHaveLength(1);
+  });
+
+  it('fails a chain whose chain ID cannot be read or is malformed, with no URL in the text', async () => {
+    const deps = fakeDeps(
+      { ...chainResults(USDC), ...chainResults(BASE_UNI) },
+      { [`ethereum:${USDC.address}`]: coin(USDC), [`base:${BASE_UNI.address}`]: coin(BASE_UNI) },
+      false,
+      {
+        'evm:1': new TypeError('Failed to parse URL from https://rpc.example/v2/SECRETKEY'),
+        'evm:8453': 'base',
+      },
+    );
+    const reports = await verifyTokens([USDC, BASE_UNI], deps);
+    expect(reports.map((r) => r.problems)).toEqual([
+      ['RPC chain ID: Failed to parse URL from <rpc-url>'],
+      ['RPC chain ID does not match evm:8453; check VERIFY_RPC_EVM_8453'],
+    ]);
+    expect(JSON.stringify(reports)).not.toMatch(/SECRETKEY|rpc\.example/);
+  });
+
+  it('reads wards(gateway) for a token with a bridge exemption', async () => {
+    const coins = { [`arbitrum:${ARB_DAI.address}`]: coin(ARB_DAI) };
+    const ok = await verifyTokens([ARB_DAI], fakeDeps(chainResults(ARB_DAI), coins));
+    expect(ok[0]?.problems).toEqual([]);
+    const call = wardsCall(ARB_DAI_GATEWAY);
+    const notWard = await verifyTokens(
+      [ARB_DAI],
+      fakeDeps(chainResults(ARB_DAI, { [call]: encUint(0) }), coins),
+    );
+    expect(notWard[0]?.problems).toEqual([`wards(${ARB_DAI_GATEWAY}) is 0, expected 1`]);
+    const reverted = await verifyTokens(
+      [ARB_DAI],
+      fakeDeps(chainResults(ARB_DAI, { [call]: undefined }), coins),
+    );
+    expect(reverted[0]?.problems).toEqual([`ward: execution reverted (${call})`]);
   });
 
   it('reports a decimals mismatch and a reverted call', async () => {
@@ -235,5 +358,73 @@ describe('verifyTokens', () => {
     const deps = fakeDeps(chainResults(USDC), {}, true);
     const [report] = await verifyTokens([USDC], deps);
     expect(report?.problems).toEqual(['DefiLlama: HTTP 502', 'no DefiLlama entry']);
+  });
+
+  it('scrubs URLs from read errors', async () => {
+    const deps = fakeDeps({}, { [`ethereum:${USDC.address}`]: coin(USDC) });
+    deps.ethCall = async () => {
+      throw new Error('fetch to https://eth.example/key/abc123 failed');
+    };
+    const [report] = await verifyTokens([USDC], deps);
+    expect(report?.problems).toEqual(['metadata: fetch to <rpc-url> failed']);
+  });
+});
+
+describe('RPC URLs never reach output', () => {
+  it('replaces URL-looking substrings with <rpc-url>', () => {
+    expect(scrubUrls('Failed to parse URL from https://x.example/v2/KEY')).toBe(
+      'Failed to parse URL from <rpc-url>',
+    );
+    // Commas are URL characters, so a following comma is scrubbed too (over-scrubbing is safe).
+    expect(scrubUrls('a wss://node.example:8546/KEY b http://u:p@h/x,y')).toBe(
+      'a <rpc-url> b <rpc-url>',
+    );
+    expect(scrubUrls('host eth-mainnet.g.alchemy.com/v2/KEY failed')).toBe('host <rpc-url> failed');
+    expect(scrubUrls('RPC HTTP 429')).toBe('RPC HTTP 429');
+    expect(scrubUrls('execution reverted (0x313ce567)')).toBe('execution reverted (0x313ce567)');
+  });
+
+  it('formats errors as one scrubbed line of at most 200 characters', () => {
+    expect(errText(new Error('bad https://k.example/SECRET'))).toBe('bad <rpc-url>');
+    expect(errText('plain https://k.example/SECRET')).toBe('plain <rpc-url>');
+    expect(errText(new Error(`${'x'.repeat(300)}`))).toHaveLength(200);
+    expect(errText(new Error(`${'x'.repeat(190)} https://k.example/SECRET`))).not.toMatch(
+      /SECRET|k\.example/,
+    );
+  });
+});
+
+describe('resolveRpcUrl', () => {
+  const DEFAULTS = { 'evm:1': 'https://ethereum-rpc.publicnode.com' };
+
+  it('uses the trimmed environment value, else the default', () => {
+    expect(resolveRpcUrl('evm:1', {}, DEFAULTS)).toBe('https://ethereum-rpc.publicnode.com');
+    expect(resolveRpcUrl('evm:1', { VERIFY_RPC_EVM_1: '  ' }, DEFAULTS)).toBe(
+      'https://ethereum-rpc.publicnode.com',
+    );
+    expect(
+      resolveRpcUrl('evm:1', { VERIFY_RPC_EVM_1: ' https://rpc.example/v2/KEY ' }, DEFAULTS),
+    ).toBe('https://rpc.example/v2/KEY');
+  });
+
+  it('refuses a malformed or non-http(s) URL without quoting it', () => {
+    for (const value of ['rpc.example/v2/SECRETKEY', 'not a url SECRETKEY', 'ftp://h/SECRETKEY']) {
+      let message = '';
+      try {
+        resolveRpcUrl('evm:1', { VERIFY_RPC_EVM_1: value }, DEFAULTS);
+      } catch (err: unknown) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      expect(message, value).toMatch(
+        /^VERIFY_RPC_EVM_1 (is not a valid URL|must be an http\(s\) URL) \(value not shown\)$/,
+      );
+      expect(message).not.toMatch(/SECRETKEY|rpc\.example/);
+    }
+  });
+
+  it('refuses a chain with no RPC', () => {
+    expect(() => resolveRpcUrl('evm:10', {}, DEFAULTS)).toThrow(
+      'no RPC for evm:10; set VERIFY_RPC_EVM_10',
+    );
   });
 });

@@ -102,3 +102,60 @@ describe('chain registry', () => {
     expect(knownDecimals('evm:5', 'native')).toBeUndefined();
   });
 });
+
+describe('CHAINS is immutable at runtime (fee data: stablecoins, knownDecimals)', () => {
+  const BASE_WETH = '0x4200000000000000000000000000000000000006';
+  const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const ETH_USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+
+  /** Every object reachable from `value`, itself included. */
+  function objectsIn(value: object, path: string): [string, object][] {
+    const out: [string, object][] = [[path, value]];
+    for (const [k, v] of Object.entries(value) as [string, unknown][]) {
+      if (typeof v === 'object' && v !== null) out.push(...objectsIn(v, `${path}.${k}`));
+    }
+    return out;
+  }
+
+  it('freezes the array, every chain and every nested object', () => {
+    const all = objectsIn(CHAINS, 'CHAINS');
+    // The array, four chains, and a stablecoins and knownDecimals map each.
+    expect(all.length).toBe(1 + CHAINS.length * 3);
+    for (const [path, o] of all) expect(Object.isFrozen(o), path).toBe(true);
+  });
+
+  it('throws TypeError on assignment, deletion and addition (ES modules are strict)', () => {
+    const base = getChain('evm:8453');
+    const eth = getChain('evm:1');
+    if (!base || !eth) throw new Error('registry is missing Base or Ethereum');
+    const stable = base.stablecoins as Record<string, string>;
+    const decimals = eth.knownDecimals as Record<string, number>;
+    const attempts: (() => void)[] = [
+      () => (stable.WETH = BASE_WETH),
+      () => (stable.USDC = BASE_WETH),
+      () => delete stable.USDC,
+      () => (decimals[ETH_USDC] = 18),
+      // The `delete` operator itself is under test (it throws on a frozen object in strict mode).
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      () => delete decimals[ETH_USDC],
+      () => (decimals['0x0000000000000000000000000000000000000001'] = 6),
+      () => ((base as { stablecoins: Record<string, string> }).stablecoins = { WETH: BASE_WETH }),
+      () => ((eth as { nativeDecimals: number }).nativeDecimals = 6),
+      () => ((eth as { wrappedNative: string }).wrappedNative = ETH_USDC),
+      () => (CHAINS as unknown as unknown[]).push({}),
+      () => ((CHAINS as unknown as unknown[])[0] = {}),
+    ];
+    for (const attempt of attempts) expect(attempt).toThrow(TypeError);
+  });
+
+  it('keeps the documented values after failed attempts', () => {
+    const stable = getChain('evm:8453')?.stablecoins as Record<string, string>;
+    expect(() => (stable.WETH = BASE_WETH)).toThrow(TypeError);
+    expect(isStablecoin('evm:8453', BASE_WETH)).toBe(false);
+    expect(isStablecoin('evm:8453', BASE_USDC)).toBe(true);
+    expect(isWrappedNative('evm:8453', BASE_WETH)).toBe(true);
+    expect(knownDecimals('evm:1', ETH_USDC)).toBe(6);
+    expect(knownDecimals('evm:1', 'native')).toBe(18);
+    expect(Object.keys(getChain('evm:8453')?.stablecoins ?? {}).sort()).toEqual(['DAI', 'USDC']);
+  });
+});

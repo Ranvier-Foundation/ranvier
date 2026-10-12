@@ -1,12 +1,9 @@
 import type { Hex } from 'viem';
 import { errorMessage, KmsSigner, type KmsTransport } from './adapters/signers/kms.js';
-import {
-  assertLocalSigningChains,
-  LOCAL_SIGNER_DEFAULT_CHAINS,
-  LocalKeySigner,
-} from './adapters/signers/local-key.js';
+import { assertLocalSigningChains, LocalKeySigner } from './adapters/signers/local-key.js';
 import { KMS_KEY_ARN, type Config } from './config.js';
 import type { RoutePolicy } from './domain/route-policy.js';
+import { mainnetRulesApply } from './mainnet-rules.js';
 import type { QuoteSigner } from './ports/quote-signer.js';
 import { assertKmsSigningChains } from './signing-policy.js';
 
@@ -31,8 +28,7 @@ export interface SignerSetupDeps {
  * count as mainnets (fail closed).
  */
 export function kmsPinRequired(config: Config, nodeEnv: string | undefined): boolean {
-  if (nodeEnv?.trim().toLowerCase() === 'production') return true;
-  return config.ZEROX_CHAIN_IDS.some((id) => !LOCAL_SIGNER_DEFAULT_CHAINS.includes(id));
+  return mainnetRulesApply(config.ZEROX_CHAIN_IDS, nodeEnv);
 }
 
 /**

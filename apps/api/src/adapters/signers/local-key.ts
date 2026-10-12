@@ -2,18 +2,11 @@ import { CHAINS } from '@ranvier/chains';
 import type { Hex, TypedDataDefinition } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { QuoteSigner } from '../../ports/quote-signer.js';
+import { LOCAL_SIGNER_DEFAULT_CHAINS } from '../../mainnet-rules.js';
 import { TRUSTED_ROUTERS, ZEROX_SETTLERS } from '../../trusted-routers.js';
 
-/**
- * The only chains a key from the environment may ever sign for: known testnets and local
- * chains. `LOCAL_SIGNER_CHAIN_IDS` may narrow this set, never extend it.
- */
-export const LOCAL_SIGNER_DEFAULT_CHAINS: readonly number[] = [
-  84532, // Base Sepolia
-  11155111, // Sepolia
-  421614, // Arbitrum Sepolia
-  31337, // Anvil / Hardhat (including a forked mainnet run under its own chain ID)
-];
+// Defined in mainnet-rules.ts (shared with the config schema); re-exported here unchanged.
+export { LOCAL_SIGNER_DEFAULT_CHAINS };
 
 const LOCAL_SIGNER_ALLOWED: ReadonlySet<number> = new Set(LOCAL_SIGNER_DEFAULT_CHAINS);
 
