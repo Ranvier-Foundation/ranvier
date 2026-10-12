@@ -97,7 +97,11 @@
   --text-small: 14px;
   --text-caption: 13px;
   --text-badge: 11px;
+  /* Wallet row tags (canvas: 12 px). */
+  --text-tag: 12px;
   --text-badge--font-weight: 700;
+
+  --leading-body: 1.5;
 
   --tracking-logo: -0.055em;
   --tracking-num: -0.02em;
@@ -135,6 +139,7 @@
   --spacing-18: 18px;
   --spacing-26: 26px;
   --spacing-30: 30px;
+  --spacing-36: 36px;
   --spacing-160: 160px;
   /* Control sizes. */
   --spacing-control: 44px;
@@ -150,6 +155,8 @@
   --radius-none: 0px;
   --radius-pill: 999px;
   --radius-round: 50%;
+  /* Wallet icons in the connect dialog (canvas: 36 px tile, 10 px corners). */
+  --radius-icon: 10px;
 
   /* Motion */
   --default-transition-duration: 150ms;
