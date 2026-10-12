@@ -23,6 +23,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The AWS SDK's transitive packages are pinned by pnpm overrides (ADR 0005).
+      - run: pnpm --filter @ranvier/api check:aws-overrides
       - run: pnpm format:check
       - run: pnpm turbo run lint typecheck test build --filter='!@ranvier/contracts'
       - run: pnpm audit --prod --audit-level high
