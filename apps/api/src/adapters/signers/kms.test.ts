@@ -270,39 +270,47 @@ describe('KmsSigner.signTypedData', () => {
   });
 
   it('normalises high s, pads DER integers and finds the recovery bit (fuzzed)', async () => {
-    // Find quotes whose signatures exercise every DER and recovery case.
-    const want = { highR: false, shortR: false, shortS: false, v27: false, v28: false };
-    const nonces: bigint[] = [];
-    for (let n = 0n; n < 4_000n && !Object.values(want).every(Boolean); n++) {
-      const digest = hashTypedData(quoteOn(1, n));
-      const sig = await sign({ hash: digest, privateKey: KEY });
+    // No RNG: the "fuzz" inputs are fixed nonces, found once by scanning nonces 0.. on chain 1
+    // with KEY (RFC 6979 signing is deterministic, so the classes below never change). Scanning
+    // at test time cost ~590 secp256k1 signatures (the shortR class alone is 1 in 256) and
+    // timed out on slow CI runners. First hit per class: v=27 -> 0, v=28 -> 1, 33-byte r -> 5,
+    // short s -> 87, short r -> 589. Each nonce is signed once with a KMS that returns the
+    // high-s twin and once with the low-s twin, so every case also covers both s forms.
+    const NONCES = [0n, 1n, 5n, 87n, 589n];
+    const classes = {
+      highR: [] as bigint[], // r >= 2^255: 33-byte DER INTEGER with a 0x00 pad
+      shortR: [] as bigint[], // r < 2^248: DER INTEGER shorter than 32 bytes
+      shortS: [] as bigint[],
+      v27: [] as bigint[],
+      v28: [] as bigint[],
+    };
+    const expected = new Map<bigint, Hex>();
+    for (const n of NONCES) {
+      const sig = await sign({ hash: hashTypedData(quoteOn(1, n)), privateKey: KEY });
+      expected.set(n, serializeSignature(sig));
       const r = BigInt(sig.r);
       const s = BigInt(sig.s);
-      const hit = {
-        highR: r >> 255n === 1n && !want.highR,
-        shortR: r < 1n << 248n && !want.shortR,
-        shortS: s < 1n << 248n && !want.shortS,
-        v27: sig.yParity === 0 && !want.v27,
-        v28: sig.yParity === 1 && !want.v28,
-      };
-      if (Object.values(hit).some(Boolean) || n < 16n) {
-        nonces.push(n);
-        for (const [k, v] of Object.entries(hit)) if (v) want[k as keyof typeof want] = true;
+      if (r >> 255n === 1n) classes.highR.push(n);
+      if (r < 1n << 248n) classes.shortR.push(n);
+      if (s < 1n << 248n) classes.shortS.push(n);
+      (sig.yParity === 0 ? classes.v27 : classes.v28).push(n);
+    }
+    // Coverage guard: if the nonces stop producing every case, fail loudly rather than erode.
+    for (const [name, hits] of Object.entries(classes)) {
+      expect(hits.length, `no fixed nonce covers ${name}; rescan nonces`).toBeGreaterThanOrEqual(1);
+    }
+
+    for (const sMode of ['high', 'low'] as const) {
+      const signer = await create(fake({ sMode }));
+      for (const n of NONCES) {
+        const data = quoteOn(1, n);
+        const sig = await signer.signTypedData(data);
+        expect(sig, `nonce ${n} sMode ${sMode}`).toBe(expected.get(n));
+        expect(BigInt(`0x${sig.slice(66, 130)}`) <= SECP256K1_HALF_N).toBe(true);
+        expect(['1b', '1c']).toContain(sig.slice(-2));
       }
     }
-    expect(want).toEqual({ highR: true, shortR: true, shortS: true, v27: true, v28: true });
-
-    const signer = await create(fake({ sMode: 'alternate' }));
-    for (const n of nonces) {
-      const data = quoteOn(1, n);
-      const sig = await signer.signTypedData(data);
-      expect(sig).toBe(
-        serializeSignature(await sign({ hash: hashTypedData(data), privateKey: KEY })),
-      );
-      expect(BigInt(`0x${sig.slice(66, 130)}`) <= SECP256K1_HALF_N).toBe(true);
-      expect(['1b', '1c']).toContain(sig.slice(-2));
-    }
-  });
+  }, 30_000);
 
   it('signs only for its configured chains', async () => {
     const signer = await create(fake(), { chainIds: [8453] });
