@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from './config.js';
+import { loadConfig, parseWebOrigins } from './config.js';
 
 describe('loadConfig', () => {
   it('applies defaults', () => {
@@ -49,6 +49,43 @@ describe('loadConfig', () => {
       31337, 84532,
     ]);
     expect(() => loadConfig({ LOCAL_SIGNER_CHAIN_IDS: 'x' })).toThrow();
+  });
+
+  describe('WEB_ORIGINS (CORS)', () => {
+    it('defaults to no origins, and empty means unset', () => {
+      expect(loadConfig({}).WEB_ORIGINS).toEqual([]);
+      expect(loadConfig({ WEB_ORIGINS: '' }).WEB_ORIGINS).toEqual([]);
+      expect(loadConfig({ WEB_ORIGINS: '   ' }).WEB_ORIGINS).toEqual([]);
+    });
+
+    it('parses exact origins and trims whitespace around entries', () => {
+      expect(
+        loadConfig({ WEB_ORIGINS: ' http://localhost:3000 , https://app.ranvier.example ' })
+          .WEB_ORIGINS,
+      ).toEqual(['http://localhost:3000', 'https://app.ranvier.example']);
+      expect(parseWebOrigins('http://[::1]:3000')).toEqual(['http://[::1]:3000']);
+    });
+
+    it.each([
+      ['trailing slash', 'http://localhost:3000/'],
+      ['path', 'https://app.ranvier.example/swap'],
+      ['query', 'https://app.ranvier.example?x=1'],
+      ['upper case', 'https://App.Ranvier.example'],
+      ['default port', 'https://app.ranvier.example:443'],
+      ['credentials', 'https://user:pw@app.ranvier.example'],
+      ['wildcard', '*'],
+      ['wildcard subdomain', 'https://*.ranvier.example'],
+      ['null origin', 'null'],
+      ['no scheme', 'app.ranvier.example'],
+      ['other scheme', 'ftp://app.ranvier.example'],
+      ['file scheme', 'file:///etc/passwd'],
+      ['invalid URL', 'http://'],
+      ['empty entry', 'http://localhost:3000,,https://app.ranvier.example'],
+      ['trailing comma', 'http://localhost:3000,'],
+      ['duplicate', 'http://localhost:3000, http://localhost:3000'],
+    ])('refuses a %s at startup', (_label, value) => {
+      expect(() => loadConfig({ WEB_ORIGINS: value })).toThrow(/WEB_ORIGINS/);
+    });
   });
 
   describe('KMS signer settings', () => {

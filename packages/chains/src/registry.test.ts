@@ -87,7 +87,10 @@ describe('chain registry', () => {
       for (const address of listed) {
         expect(knownDecimals(chain.key, address), `${chain.key} ${address}`).toBeTypeOf('number');
       }
-      expect(Object.keys(chain.knownDecimals).sort()).toEqual([...listed].sort());
+      // Chains with a curated token list may know more tokens (ADR 0006, tokens.test.ts).
+      if (chain.family === 'solana') {
+        expect(Object.keys(chain.knownDecimals).sort()).toEqual([...listed].sort());
+      }
     }
   });
 

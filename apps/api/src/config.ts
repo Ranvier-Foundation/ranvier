@@ -26,6 +26,50 @@ const chainIdList = z
   .transform((s) => s.split(',').map((id) => Number(id.trim())))
   .pipe(z.array(z.number().int().positive()).min(1));
 
+/**
+ * Parses WEB_ORIGINS: comma-separated exact browser origins (`scheme://host[:port]`) allowed to
+ * call the API cross-origin. Entries are trimmed. Anything a browser would never send as an
+ * `Origin` header is refused, so a typo fails startup instead of silently not matching: a path
+ * or trailing slash, upper case, a default port, credentials, a wildcard, `null`, a scheme other
+ * than http or https, an empty entry, or a duplicate.
+ */
+export function parseWebOrigins(raw: string): string[] {
+  const origins: string[] = [];
+  for (const part of raw.split(',')) {
+    const entry = part.trim();
+    if (entry === '') throw new Error('WEB_ORIGINS has an empty entry');
+    // `https://*.example.com` parses as a literal host; wildcards are never supported.
+    if (entry.includes('*')) throw new Error(`WEB_ORIGINS entries cannot be wildcards: ${entry}`);
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new Error(`WEB_ORIGINS entry is not a URL: ${entry}`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error(`WEB_ORIGINS entry must be http or https: ${entry}`);
+    }
+    if (url.origin !== entry) {
+      throw new Error(
+        `WEB_ORIGINS entry must be an exact origin like https://app.example.com ` +
+          `(lowercase, no path, no trailing slash, no default port): ${entry}`,
+      );
+    }
+    if (origins.includes(entry)) throw new Error(`WEB_ORIGINS lists ${entry} twice`);
+    origins.push(entry);
+  }
+  return origins;
+}
+
+const webOrigins = z.string().transform((raw, ctx) => {
+  try {
+    return parseWebOrigins(raw);
+  } catch (err: unknown) {
+    ctx.addIssue({ code: 'custom', message: err instanceof Error ? err.message : String(err) });
+    return z.NEVER;
+  }
+});
+
 /** Absolute ceiling for MAX_SLIPPAGE_BPS: no configuration may allow more than 50%. */
 export const HARD_MAX_SLIPPAGE_BPS = 5_000;
 
@@ -81,6 +125,11 @@ const envSchema = z
      * in bps. Routes beyond it are refused, never signed.
      */
     MAX_ORACLE_DEVIATION_BPS: z.coerce.number().int().min(0).max(5_000).default(500),
+    /**
+     * Browser origins allowed to call the API (CORS), e.g. the web app. Unset: no
+     * cross-origin access. Never a wildcard; credentials are never allowed.
+     */
+    WEB_ORIGINS: webOrigins.default([]),
   })
   .superRefine((env, ctx) => {
     // Exactly one signer, and a KMS signer needs its region. These refuse to start rather than

@@ -1,4 +1,10 @@
-import { chainFamily, isValidAddress, isValidTokenAddress, NATIVE } from '@ranvier/chains';
+import {
+  chainFamily,
+  getChain,
+  isValidAddress,
+  isValidTokenAddress,
+  NATIVE,
+} from '@ranvier/chains';
 import type { ChainKey } from '@ranvier/types';
 import { z, type ZodError } from 'zod';
 import { HARD_MAX_SLIPPAGE_BPS } from '../config.js';
@@ -70,6 +76,32 @@ export function quoteRequestSchema(opts: QuoteSchemaOptions) {
     })
     .transform((r) => ({ ...r, taker: normalise(r.sellToken.chain, r.taker) }));
 }
+
+/** Longest accepted token search text. */
+export const MAX_TOKEN_QUERY_LENGTH = 64;
+export const DEFAULT_TOKEN_LIMIT = 50;
+export const MAX_TOKEN_LIMIT = 100;
+
+/**
+ * GET /v1/tokens query (ADR 0006). `chain` must be a registry chain. `q` is optional search text
+ * of at most 64 characters: letters, digits, currency signs, spaces, `.`, `_` and `-` (enough for
+ * symbols, names and addresses); anything else is malformed. `limit` is a plain decimal integer
+ * from 1 to 100, default 50. Unknown parameters and repeated parameters are refused.
+ */
+export const tokensQuerySchema = z.strictObject({
+  chain: chainKey.refine((k) => getChain(k) !== undefined, 'unknown chain'),
+  q: z
+    .string()
+    .max(MAX_TOKEN_QUERY_LENGTH)
+    .regex(/^[\p{L}\p{N}\p{Sc} ._-]*$/u, 'unsupported characters')
+    .optional(),
+  limit: z
+    .string()
+    .regex(/^[1-9]\d{0,2}$/, 'must be a positive integer')
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(MAX_TOKEN_LIMIT))
+    .default(DEFAULT_TOKEN_LIMIT),
+});
 
 /**
  * A 400 body with a stable code and the offending field paths only (e.g. `sellToken.address`).

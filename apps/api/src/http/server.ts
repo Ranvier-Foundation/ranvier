@@ -12,6 +12,8 @@ import type { PriceOracle, SwapHistory, TokenPrice } from '../ports/price-oracle
 import type { QuoteProvider } from '../ports/quote-provider.js';
 import { SigningUnavailableError, type QuoteSigner } from '../ports/quote-signer.js';
 import { canSignChain } from '../signing-policy.js';
+import { registerCors } from './cors.js';
+import { registerListRoutes } from './lists.js';
 import { feePreviewSchema, invalidRequest, quoteRequestSchema } from './schemas.js';
 
 export interface ServerDeps {
@@ -26,6 +28,10 @@ export interface ServerDeps {
   /** Largest output shortfall against the oracle, in bps (default 500). */
   maxOracleDeviationBps?: number;
   logger?: boolean;
+  /** Exact browser origins allowed to call the API (WEB_ORIGINS). Default: none. */
+  webOrigins?: readonly string[];
+  /** EVM chain IDs listed by GET /v1/chains (ZEROX_CHAIN_IDS). Default: none. */
+  servedChainIds?: readonly number[];
   /** When set, quotes include a signed fee-wrapper transaction. */
   signing?: {
     feeWrapper: Hex;
@@ -57,6 +63,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: deps.logger ?? false, bodyLimit: 16 * 1024 });
   const quoteSchema = quoteRequestSchema({ maxSlippageBps: deps.maxSlippageBps ?? 1_000 });
   const maxOracleDeviationBps = deps.maxOracleDeviationBps ?? 500;
+  // Before any route, so every response (errors and 404s included) carries the CORS decision.
+  registerCors(app, deps.webOrigins ?? []);
 
   // Clients get stable codes only; details stay in the server log.
   app.setErrorHandler((err, req, reply) => {
@@ -74,6 +82,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
   app.get('/health', async () => ({ status: 'ok' }));
+
+  // Quoting needs the same dependencies /v1/quotes checks, and a trusted router on the chain.
+  const routingConfigured =
+    deps.providers.length > 0 && !!deps.prices && !!deps.history && !!deps.routePolicy;
+  registerListRoutes(app, {
+    servedChainIds: deps.servedChainIds ?? [],
+    quoting: (chainId) => routingConfigured && (deps.routePolicy?.has(chainId) ?? false),
+  });
 
   app.post('/v1/fees/preview', async (req, reply) => {
     const parsed = feePreviewSchema.safeParse(req.body);
