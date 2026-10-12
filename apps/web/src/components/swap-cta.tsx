@@ -21,6 +21,8 @@ export function SwapCta() {
     );
   }
   return (
-    <ConnectWalletButton className={`${CTA} hover:opacity-88`}>{t('swap.connect')}</ConnectWalletButton>
+    <ConnectWalletButton className={`${CTA} hover:opacity-88`}>
+      {t('swap.connect')}
+    </ConnectWalletButton>
   );
 }

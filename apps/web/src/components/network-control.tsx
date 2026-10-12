@@ -9,12 +9,7 @@ import { classifyWalletError } from '@/lib/wallet/errors';
 import { EVM_CHAINS, evmChainId, registryChainByWalletId } from '@/lib/wallet/chains';
 import { useDisclosure } from '@/lib/use-disclosure';
 import { Chevron } from './icons';
-import {
-  NetworkCoin,
-  NetworkPillFace,
-  PillButton,
-  StaticNetworkPill,
-} from './network-pill';
+import { NetworkCoin, NetworkPillFace, PillButton, StaticNetworkPill } from './network-pill';
 
 type SwitchState =
   | { kind: 'idle' }
@@ -25,7 +20,13 @@ const ROW =
   'flex h-control w-full items-center gap-8 rounded-pill px-14 text-lead transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent';
 
 /** The chain list (and the unsupported-network notice) shown in the menu and the more menu. */
-function NetworkChoices({ active, onDone }: { active: ChainConfig | undefined; onDone?: () => void }) {
+function NetworkChoices({
+  active,
+  onDone,
+}: {
+  active: ChainConfig | undefined;
+  onDone?: () => void;
+}) {
   const { switchChainAsync } = useSwitchChain();
   const [state, setState] = useState<SwitchState>({ kind: 'idle' });
   const busy = state.kind === 'switching';
@@ -72,7 +73,9 @@ function NetworkChoices({ active, onDone }: { active: ChainConfig | undefined; o
           >
             <NetworkCoin chain={chain} />
             <span className="flex-1 text-left font-medium">{chain.name}</span>
-            {current ? <span className="text-caption text-sub">{t('header.network.current')}</span> : null}
+            {current ? (
+              <span className="text-caption text-sub">{t('header.network.current')}</span>
+            ) : null}
           </button>
         );
       })}

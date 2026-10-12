@@ -80,7 +80,6 @@ function WalletIcon({ icon, name }: { icon?: string | undefined; name: string })
     >
       {icon ? (
         // Provider-supplied icons were checked to be small base64 data images; <img> only.
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={icon} alt="" width={36} height={36} className="size-36 object-contain" />
       ) : (
         Array.from(name)[0]?.toUpperCase()
@@ -225,7 +224,9 @@ function ConnectDialog({ onClose }: { onClose: () => void }) {
                       <button
                         type="button"
                         disabled={connecting}
-                        aria-busy={attempt.kind === 'connecting' && attempt.wallet.key === wallet.key}
+                        aria-busy={
+                          attempt.kind === 'connecting' && attempt.wallet.key === wallet.key
+                        }
                         onClick={() => void pick(wallet)}
                         className={ROW}
                       >

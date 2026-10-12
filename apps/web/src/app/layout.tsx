@@ -13,7 +13,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-dvh antialiased"><WalletProviders>{children}</WalletProviders></body>
+      <body className="min-h-dvh antialiased">
+        <WalletProviders>{children}</WalletProviders>
+      </body>
     </html>
   );
 }

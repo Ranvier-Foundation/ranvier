@@ -10,6 +10,10 @@ export type AvatarQuadrants = readonly [AvatarToken, AvatarToken, AvatarToken, A
 /** The canvas avatar, used when the address is not a valid EVM address. */
 export const DEFAULT_QUADRANTS: AvatarQuadrants = ['primary', 'blush', 'blush', 'accent'];
 
+function tokenAt(index: number): AvatarToken {
+  return AVATAR_TOKENS[index % AVATAR_TOKENS.length] ?? 'primary';
+}
+
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 export function avatarQuadrants(address: string): AvatarQuadrants {
@@ -20,11 +24,16 @@ export function avatarQuadrants(address: string): AvatarQuadrants {
     const byte = parseInt(address.slice(2 + i * 2, 4 + i * 2), 16);
     acc[i % 4] = ((acc[i % 4] ?? 7) * 31 + byte) >>> 0;
   }
-  const pick = (n: number): AvatarToken => AVATAR_TOKENS[(acc[n] ?? 0) % AVATAR_TOKENS.length]!;
-  const q: [AvatarToken, AvatarToken, AvatarToken, AvatarToken] = [pick(0), pick(1), pick(2), pick(3)];
+  const pick = (n: number): AvatarToken => tokenAt((acc[n] ?? 0) % AVATAR_TOKENS.length);
+  const q: [AvatarToken, AvatarToken, AvatarToken, AvatarToken] = [
+    pick(0),
+    pick(1),
+    pick(2),
+    pick(3),
+  ];
   // Four identical quadrants would read as a flat disc: step the last one to the next token.
   if (q.every((t) => t === q[0])) {
-    q[3] = AVATAR_TOKENS[(AVATAR_TOKENS.indexOf(q[0]) + 1) % AVATAR_TOKENS.length]!;
+    q[3] = tokenAt(AVATAR_TOKENS.indexOf(q[0]) + 1);
   }
   return q;
 }

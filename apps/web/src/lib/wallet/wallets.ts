@@ -26,6 +26,12 @@ export interface WalletOption<C extends ConnectorLike = ConnectorLike> {
   readonly connector: C;
 }
 
+/** Control characters, zero-width and bidirectional-override characters. */
+const UNSAFE_CHARS = new RegExp(
+  // eslint-disable-next-line no-control-regex -- stripping control characters is the point
+  '[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ufeff]',
+  'g',
+);
 const RDNS = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/i;
 const ICON = /^data:image\/(?:png|svg\+xml|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
@@ -36,11 +42,7 @@ export function safeIcon(icon: string | undefined): string | undefined {
 
 /** Strips control and bidi-override characters, collapses whitespace and caps the length. */
 export function safeName(name: string): string {
-  const cleaned = name
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const cleaned = name.replace(UNSAFE_CHARS, ' ').replace(/\s+/g, ' ').trim();
   return Array.from(cleaned).slice(0, MAX_NAME_LENGTH).join('').trim();
 }
 
