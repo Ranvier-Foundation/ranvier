@@ -94,18 +94,49 @@ describe('ZeroXProvider.quote', () => {
 
   it('maps the 0x response', async () => {
     const { provider } = setup();
+    // Fixture: a real USDC -> WETH quote on Base recorded from the live API on 2026-10-12.
     expect(await provider.quote(req, AbortSignal.timeout(1000))).toEqual({
       provider: '0x',
-      buyAmount: 454443538468285000000000n,
-      minBuyAmount: 449892276190185000000000n,
-      buyAmountUsd: 45444353n,
-      gasCostUsd: 0n,
+      buyAmount: 391197872355229192n,
+      minBuyAmount: 389241882993453046n,
+      // The test oracle prices every token at $1, so USD cents are amount * 100 / 10^decimals.
+      buyAmountUsd: (391197872355229192n * 100n) / 10n ** 18n,
+      gasCostUsd: (3122680126329n * 100n) / 10n ** 18n,
       route: [
-        { protocol: 'Uniswap_V3', from: WETH.address, to: DAI.address, proportionBps: 7000 },
-        { protocol: 'Curve', from: WETH.address, to: DAI.address, proportionBps: 3000 },
+        {
+          protocol: 'Metric_V2',
+          from: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+          to: '0x4200000000000000000000000000000000000006',
+          proportionBps: 10000,
+        },
       ],
       tx: { to: ZEROX_ALLOWANCE_HOLDER, data: fixture.transaction.data, value: 0n },
     });
+  });
+
+  it('starts pricing before the 0x quote returns', async () => {
+    const events: string[] = [];
+    const slowPrices: PriceOracle = {
+      usdValue: async (token) => {
+        events.push(`price:${token.symbol}`);
+        return 0n;
+      },
+    };
+    const fetchStub = (async () => {
+      events.push('fetch');
+      return new Response(JSON.stringify(fixture), { status: 200 });
+    }) as typeof fetch;
+    const provider = new ZeroXProvider({
+      apiKey: 'k',
+      feeWrapper: WRAPPER,
+      chainIds: [1],
+      prices: slowPrices,
+      fetch: fetchStub,
+    });
+    await provider.quote(req, AbortSignal.timeout(1000));
+    // Warm-up lookups are issued first, alongside the request; exact lookups follow it.
+    expect(events.slice(0, 3).sort()).toEqual(['fetch', 'price:DAI', 'price:ETH']);
+    expect(events).toHaveLength(5);
   });
 
   it('uses the 0x sentinel for the native token', async () => {

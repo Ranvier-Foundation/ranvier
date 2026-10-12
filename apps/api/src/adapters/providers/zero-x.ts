@@ -94,6 +94,20 @@ export class ZeroXProvider implements QuoteProvider {
   }
 
   async quote(req: QuoteRequest, signal: AbortSignal): Promise<ProviderQuote> {
+    const chain = getChain(req.sellToken.chain);
+    const native: Token = {
+      chain: req.sellToken.chain,
+      address: NATIVE,
+      symbol: chain?.nativeSymbol ?? 'ETH',
+      decimals: 18,
+    };
+    // Start pricing now so it overlaps the quote request instead of following it. The
+    // oracle caches, so the exact-amount lookups below are then served without a round trip.
+    const warm = Promise.allSettled([
+      this.opts.prices.usdValue(req.buyToken, 10n ** BigInt(req.buyToken.decimals), signal),
+      this.opts.prices.usdValue(native, 10n ** 18n, signal),
+    ]);
+
     const params = new URLSearchParams({
       chainId: String(chainIdOf(req.sellToken)),
       sellToken: toZeroXToken(req.sellToken),
@@ -116,13 +130,7 @@ export class ZeroXProvider implements QuoteProvider {
       throw new UnexpectedRouterError(`unexpected router ${body.transaction.to}`);
     }
 
-    const chain = getChain(req.sellToken.chain);
-    const native: Token = {
-      chain: req.sellToken.chain,
-      address: NATIVE,
-      symbol: chain?.nativeSymbol ?? 'ETH',
-      decimals: 18,
-    };
+    await warm;
     const [buyAmountUsd, gasCostUsd] = await Promise.all([
       this.opts.prices.usdValue(req.buyToken, body.buyAmount, signal),
       this.opts.prices.usdValue(native, body.totalNetworkFee ?? 0n, signal),

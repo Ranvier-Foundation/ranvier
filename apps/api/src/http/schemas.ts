@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const MAX_UINT256 = 2n ** 256n - 1n;
+
 const bigintString = z
   .string()
   .regex(/^\d{1,78}$/, 'must be a non-negative integer string')
@@ -27,7 +29,9 @@ export const quoteRequestSchema = z
   .object({
     sellToken: tokenSchema,
     buyToken: tokenSchema,
-    sellAmount: bigintString.refine((v) => v > 0n, 'must be greater than zero'),
+    sellAmount: bigintString
+      .refine((v) => v > 0n, 'must be greater than zero')
+      .refine((v) => v <= MAX_UINT256, 'must fit in uint256'),
     taker: z.string().min(1).max(64),
     slippageBps: z.number().int().min(0).max(5_000),
   })

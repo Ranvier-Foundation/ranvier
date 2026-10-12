@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Token } from '@ranvier/types';
-import { feeAmount, feeRate, MAX_FEE_BPS, quoteFee, type FeeInput } from './schedule.js';
+import {
+  feeAmount,
+  feeRate,
+  isWrapOrUnwrap,
+  MAX_FEE_BPS,
+  quoteFee,
+  type FeeInput,
+} from './schedule.js';
 
 const ETH: Token = { chain: 'evm:1', address: 'native', symbol: 'ETH', decimals: 18 };
 const WETH: Token = {
@@ -61,6 +68,14 @@ describe('feeRate special cases', () => {
 
   it('does not treat cross-chain native to wrapped as a wrap', () => {
     expect(rate({ sellToken: ETH, buyToken: BASE_WETH }).reason).toBe('tier-under-10k');
+  });
+
+  it('detects wrap and unwrap only for native and the same chain wrapped native', () => {
+    expect(isWrapOrUnwrap(ETH, WETH)).toBe(true);
+    expect(isWrapOrUnwrap(WETH, ETH)).toBe(true);
+    expect(isWrapOrUnwrap(ETH, BASE_WETH)).toBe(false);
+    expect(isWrapOrUnwrap(ETH, USDC)).toBe(false);
+    expect(isWrapOrUnwrap(WETH, WETH)).toBe(false);
   });
 
   it('charges 5 bps for stablecoin pairs at any size', () => {

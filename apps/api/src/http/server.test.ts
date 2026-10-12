@@ -11,7 +11,27 @@ const USDC = {
   symbol: 'USDC',
   decimals: 6,
 };
+const WETH = {
+  chain: 'evm:1',
+  address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  symbol: 'WETH',
+  decimals: 18,
+};
+const BASE_WETH = {
+  chain: 'evm:8453',
+  address: '0x4200000000000000000000000000000000000006',
+  symbol: 'WETH',
+  decimals: 18,
+};
 const TAKER = '0x00000000000000000000000000000000000000aa';
+const ZERO_FEE = { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0' };
+const SIGNING = {
+  feeWrapper: '0x000000000000000000000000000000000000fee1',
+  signer: new LocalKeySigner(padHex('0xa11ce', { size: 32 }), 'test'),
+  ttlSeconds: 60,
+  now: () => 1_800_000_000_000,
+  nonce: () => 9n,
+} as const;
 const quoteBody = {
   sellToken: ETH,
   buyToken: USDC,
@@ -192,6 +212,127 @@ describe('http', () => {
     const b = (await app.inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody })).json();
     expect(a.swap.quote.nonce).not.toBe(b.swap.quote.nonce);
     expect(Number(a.swap.quote.deadline)).toBeGreaterThan(Date.now() / 1000);
+  });
+
+  describe('native wrap and unwrap', () => {
+    const failingProvider = {
+      name: 'should-not-be-called',
+      supports: () => true,
+      quote: async (): Promise<ProviderQuote> => {
+        throw new Error('provider queried for a wrap');
+      },
+    };
+    const wrapDeps = (overrides: Partial<ServerDeps> = {}): ServerDeps =>
+      deps({
+        providers: [failingProvider],
+        prices: {
+          usdValue: async () => {
+            throw new Error('oracle queried for a wrap');
+          },
+        },
+        history: {
+          hasCompletedSwap: async () => {
+            throw new Error('history queried for a wrap');
+          },
+        },
+        signing: SIGNING,
+        ...overrides,
+      });
+
+    it('answers a wrap with deposit() on WETH, 1:1, free and unsigned', async () => {
+      const res = await buildServer(wrapDeps()).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: { ...quoteBody, buyToken: WETH },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        fee: ZERO_FEE,
+        direct: {
+          kind: 'wrap',
+          transaction: {
+            to: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+            data: '0xd0e30db0',
+            value: '1000000000000000000',
+          },
+          buyAmount: '1000000000000000000',
+          minBuyAmount: '1000000000000000000',
+        },
+      });
+    });
+
+    it('answers an unwrap with withdraw(wad) and no value', async () => {
+      const res = await buildServer(wrapDeps()).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: {
+          ...quoteBody,
+          sellToken: { ...WETH, address: WETH.address.toLowerCase() },
+          buyToken: ETH,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const wad = (10n ** 18n).toString(16).padStart(64, '0');
+      expect(res.json()).toEqual({
+        fee: ZERO_FEE,
+        direct: {
+          kind: 'unwrap',
+          transaction: {
+            to: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+            data: `0x2e1a7d4d${wad}`,
+            value: '0',
+          },
+          buyAmount: '1000000000000000000',
+          minBuyAmount: '1000000000000000000',
+        },
+      });
+    });
+
+    it('quotes a wrap while the price oracle is down and no providers are configured', async () => {
+      const res = await buildServer(wrapDeps({ providers: [] })).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: { ...quoteBody, buyToken: WETH },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().direct.kind).toBe('wrap');
+    });
+
+    it('still returns the signed fee-wrapper swap for a non-wrap pair', async () => {
+      const res = await buildServer(deps({ signing: SIGNING })).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: quoteBody,
+      });
+      const body = res.json();
+      expect(body.direct).toBeUndefined();
+      expect(body.fee.reason).toBe('tier-under-10k');
+      expect(body.swap.transaction.to).toBe('0x000000000000000000000000000000000000fee1');
+    });
+
+    it('does not treat native to wrapped native on another chain as a wrap', async () => {
+      const res = await buildServer(deps({ signing: SIGNING })).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: { ...quoteBody, buyToken: BASE_WETH },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.direct).toBeUndefined();
+      expect(body.fee.reason).toBe('tier-under-10k');
+      expect(body.best.provider).toBe('fake');
+      // Cross-chain is never signed through the same-chain fee wrapper.
+      expect(body.swap).toBeUndefined();
+    });
+
+    it('rejects amounts that do not fit in uint256', async () => {
+      const res = await buildServer(wrapDeps()).inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: { ...quoteBody, buyToken: WETH, sellAmount: (2n ** 256n).toString() },
+      });
+      expect(res.statusCode).toBe(400);
+    });
   });
 
   it('returns 502 when no provider can route', async () => {
