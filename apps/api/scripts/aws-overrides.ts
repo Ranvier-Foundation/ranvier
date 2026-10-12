@@ -5,8 +5,11 @@
  * version. pnpm applies overrides even when they break a range, so this is checked here.
  */
 
-/** Scopes whose packages must all be pinned (the direct client-kms pin excepted). */
-export const PINNED_SCOPES = ['@aws-sdk/', '@smithy/'] as const;
+/**
+ * Scopes whose packages must all be pinned (the direct client-kms pin excepted). `@aws/` covers
+ * `@aws/lambda-invoke-store`, a dependency of `@aws-sdk/core` on the credential path.
+ */
+export const PINNED_SCOPES = ['@aws-sdk/', '@smithy/', '@aws/'] as const;
 
 export interface Manifest {
   name: string;
@@ -105,6 +108,11 @@ export interface CheckInput {
 export function checkOverrides(input: CheckInput): string[] {
   const { overrides, locked, manifests, directPins } = input;
   const problems: string[] = [];
+  // Guard against a vacuous pass (no overrides parsed, or the SDK not installed at all).
+  if (overrides.size === 0) problems.push('no overrides found in pnpm-workspace.yaml');
+  for (const pin of directPins) {
+    if (!locked.has(pin)) problems.push(`${pin}: direct pin is not in the lockfile`);
+  }
   for (const [name, version] of overrides) {
     const versions = locked.get(name);
     if (!versions) problems.push(`${name}: overridden to ${version} but not in the lockfile`);

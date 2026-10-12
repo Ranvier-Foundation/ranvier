@@ -164,4 +164,24 @@ describe('checkOverrides', () => {
       '@smithy/new@1.0.0: not pinned in pnpm-workspace.yaml overrides',
     ]);
   });
+
+  it('fails instead of passing vacuously', () => {
+    expect(
+      checkOverrides({ overrides: new Map(), locked: lockedPackages(LOCK), manifests, directPins }),
+    ).toContain('no overrides found in pnpm-workspace.yaml');
+    const noKms = LOCK.replace("'@aws-sdk/client-kms@3.1141.0':", 'other@1.0.0:');
+    expect(
+      checkOverrides({ overrides, locked: lockedPackages(noKms), manifests: [], directPins }),
+    ).toContain('@aws-sdk/client-kms: direct pin is not in the lockfile');
+  });
+
+  it('treats @aws/ packages as pinned scope', () => {
+    const extra = LOCK.replace(
+      'plain-pkg@1.0.0:',
+      "'@aws/lambda-invoke-store@0.3.0':\n    x: y\n\n  plain-pkg@1.0.0:",
+    );
+    expect(
+      checkOverrides({ overrides, locked: lockedPackages(extra), manifests: [], directPins }),
+    ).toEqual(['@aws/lambda-invoke-store@0.3.0: not pinned in pnpm-workspace.yaml overrides']);
+  });
 });

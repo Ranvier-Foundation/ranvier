@@ -65,6 +65,8 @@ At startup with `KMS_KEY_ID`, every chain in `ZEROX_CHAIN_IDS` must pass this ga
 
 ## Threat model
 
+> **The production service control policies in the runbook (step 5c) have NOT been tested against real AWS.** The claims below about what they enforce describe their intent. Before they are used on the production account, apply them in a throwaway test account, run the runbook's checklist, and get a final security review. The testnet steps (runbook steps 0 to 4, 5a, 5b, 6 and 7) are safe to follow now.
+
 - **The key cannot be copied.** The private key never leaves KMS. A compromised API host, or a leaked role session, cannot take the key away and use it later.
 - **The signer address is single-purpose.** The API role can have any 32-byte digest signed: a quote, but equally an Ethereum transaction or a `permit`. The signer address must therefore never hold funds or approvals, and must never have any role except `feeSigner`.
 - **What a compromised API host can do.** It can call `kms:Sign` with the API role for as long as the role or key policy allows it. It can sign any `SwapQuote`: any fee from zero up to the cap, any allowlisted router and calldata, for any user. The damage is bounded:
@@ -77,7 +79,7 @@ At startup with `KMS_KEY_ID`, every chain in `ZEROX_CHAIN_IDS` must pass this ga
   - adds alarms on Sign from another principal, endpoint or IP; on changes to the protected roles, the break-glass users, policy versions and Roles Anywhere; and on unexpected `AssumeRole`;
   - in production, adds the SCPs below.
 
-  An attacker who runs code on the API host is inside the network pin and holds the role's session. The SCPs remove the usual remote ways in (see below). A host compromised in any other way is the case described above.
+  An attacker who runs code on the API host is inside the network pin and holds the role's session. The SCPs deny the specific remote ways in that they list (see below). A host compromised in any other way is the case described above.
 
 - **IAM administrators in the signer account.** The key policy keeps AWS's root "enable IAM" statement so that the key stays recoverable. As a result, IAM administrators are part of the trust base.
   - **Without the SCPs**, an IAM administrator in the signer account can take control in a few steps. The alarms report each step after the fact; nothing blocks it. The administrator can:
@@ -86,20 +88,23 @@ At startup with `KMS_KEY_ID`, every chain in `ZEROX_CHAIN_IDS` must pass this ga
     - open a shell on an API host (SSM Session Manager, Run Command, ECS Exec, EC2 Instance Connect, user data);
     - for a self-hosted API, add a trust anchor or change the profile, CRL or attribute mapping in Roles Anywhere;
     - silence the alarms (overwrite a metric filter, re-put an alarm without actions, unsubscribe or filter the alert topic, stop the trail).
-  - **With the two SCPs in the runbook (step 5c)**, every principal in the account except the break-glass role is denied:
+  - **With the three SCPs in the runbook (step 5c)**, every principal in the account except the break-glass role (and, where stated, the deployer and CI roles) is denied:
     - changes to the API, break-glass, deployer and CI roles;
     - credential, MFA and policy changes on the break-glass users;
-    - `iam:PassRole` on the API role, except for the deployer, CI and break-glass roles;
+    - `iam:PassRole` on the API role, except for the deployer, CI and break-glass roles. `sts:AssumeRole` into the deployer and CI roles is denied except for the named deployer operators (IAM users with MFA) and break-glass. The CI role is reached only through GitHub OIDC (`AssumeRoleWithWebIdentity`), and its trust policy limits that to the repository's `production` environment;
+    - credential, MFA and policy changes on the deployer operators' IAM users;
     - `PutKeyPolicy`, `CreateGrant` and `ReplicateKey` on the signer key;
-    - the listed SSM, ECS Exec, EC2 Instance Connect and `ModifyInstanceAttribute` actions, on all resources in the account;
+    - the listed SSM (sessions, commands, associations, automation, maintenance windows, document changes), ECS Exec, EC2 Instance Connect, root-volume and volume-attachment, and `ModifyInstanceAttribute` actions, on all resources in the account;
+    - changes to launch templates, Auto Scaling groups, ECS task definitions and services, ECS `RunTask`/`StartTask` and ECR `PutImage`, except by the deployer, CI and break-glass roles;
     - Roles Anywhere trust anchor, profile, attribute-mapping and CRL changes;
-    - stopping, changing or deleting the signer trail, the `ranvier-cloudtrail` metric filters and retention, the `ranvier-*` alarms and the alert topic and its subscriptions.
+    - stopping, changing or deleting the signer trail and its bucket policy, changing the `ranvier-cloudtrail` metric filters and retention, the `ranvier-*` alarms and the alert topic's attributes and data-protection policy, and `sns:Unsubscribe` / `sns:SetSubscriptionAttributes` on any resource. The email "unsubscribe" link is unauthenticated and outside IAM. It is covered only by confirming subscriptions with `AuthenticateOnUnsubscribe` and by keeping two independent subscriptions.
   - **What the SCPs do not stop:**
-    - anyone holding a break-glass user's password and hardware key;
+    - **break-glass itself, which can effectively sign by design**: it can rewrite the key policy and then sign, pass the API role, or open a shell on an API host. The control is that this path needs a hardware security key, is for emergencies only, and raises the STS and sign-in alarms on every use. The same applies to anyone holding a break-glass user's password and hardware key;
+    - the deployer and CI roles, which can deploy any code by design; and whoever controls a deployer operator's credentials or the GitHub `production` environment;
     - the organization's management account and AWS Support, which SCPs never restrict;
-    - other ways to run code as the API role that the SCPs do not list, notably pushing a new image to a mutable tag or editing a launch template. Deploy immutable image digests, and leave those actions to CI.
+    - ways to run code as the API role, or to change the alarms, that the SCPs do not list (AWS adds new APIs). Image pushes and launch-template edits are limited to the deployer, CI and break-glass roles, not removed; deploy immutable image digests.
   - **The organization trail** in a separate log-archive account cannot be stopped or changed from a member account. It is the tamper-resistant record. The alarms run on the signer account's own trail, because an organization trail delivers to CloudWatch Logs only in the account that manages it.
-- **Key administrators.** Only the break-glass role may change the key policy, create grants or replicate the key. The admin role can manage the key, but it cannot sign or change the policy. Deletion needs the full 30-day wait.
+- **Key administrators.** Only the break-glass role may change the key policy, create grants or replicate the key (and so break-glass can, by design, give itself `Sign`). The admin role can manage the key, but it cannot sign or change the policy. Deletion needs the full 30-day wait.
 - **Response.** Detach or deny `kms:Sign` for the API role, or disable the key. Signing stops at once, and quotes fail with `503 signing_unavailable`. If the key policy itself may have been changed, rotate the key (below) and pause the wrapper through the guardian if needed.
 - **Detection.** CloudTrail records every `Sign`, `GetPublicKey`, `DescribeKey` and key-policy change. Alert on `Sign` calls from any principal other than the API role, on `Sign` volume far above the quote rate, and on any `PutKeyPolicy`, `CreateGrant`, `DisableKey`, `ScheduleKeyDeletion` or alias change (runbook).
 - **Wrong or swapped key.** In production and on mainnets the API takes a key ARN, not an alias, and refuses to start unless the key derives to `KMS_EXPECTED_SIGNER_ADDRESS`. The planned follow-up check against `FeeWrapper.feeSigner()` (below) will also compare the configured address with the chain.

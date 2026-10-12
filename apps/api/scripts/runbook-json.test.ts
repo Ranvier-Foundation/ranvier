@@ -5,11 +5,11 @@ import { describe, expect, it } from 'vitest';
 /** Every ```json block in the KMS runbook must be valid JSON: the owner pastes them. */
 const RUNBOOK = resolve(import.meta.dirname, '../../../docs/runbooks/kms-setup.md');
 
-function jsonBlocks(markdown: string): { line: number; text: string }[] {
+function fencedBlocks(markdown: string, lang: string): { line: number; text: string }[] {
   const blocks: { line: number; text: string }[] = [];
   const lines = markdown.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if ((lines[i] ?? '').trim() !== '```json') continue;
+    if ((lines[i] ?? '').trim() !== '```' + lang) continue;
     const start = i + 1;
     const body: string[] = [];
     for (i = start; i < lines.length && (lines[i] ?? '').trim() !== '```'; i++) {
@@ -20,8 +20,14 @@ function jsonBlocks(markdown: string): { line: number; text: string }[] {
   return blocks;
 }
 
+const jsonBlocks = (md: string) => fencedBlocks(md, 'json');
+/** The ```text blocks in the runbook are CloudWatch Logs filter patterns. */
+const textBlocks = (md: string) =>
+  fencedBlocks(md, 'text').map((b) => ({ ...b, text: b.text.trim() }));
+
 describe('docs/runbooks/kms-setup.md', () => {
-  const blocks = jsonBlocks(readFileSync(RUNBOOK, 'utf8'));
+  const markdown = readFileSync(RUNBOOK, 'utf8');
+  const blocks = jsonBlocks(markdown);
 
   it('has policy blocks', () => {
     expect(blocks.length).toBeGreaterThanOrEqual(10);
@@ -44,9 +50,17 @@ describe('docs/runbooks/kms-setup.md', () => {
     }
   });
 
-  it('every block fits the smallest policy limit that applies (SCP: 10,240 characters minified)', () => {
+  it('every policy fits 5,120 characters minified (the conservative SCP limit)', () => {
     for (const { line, text } of blocks) {
-      expect(JSON.stringify(JSON.parse(text)).length, `line ${line}`).toBeLessThanOrEqual(10_240);
+      expect(JSON.stringify(JSON.parse(text)).length, `line ${line}`).toBeLessThanOrEqual(5_120);
+    }
+  });
+
+  it('every CloudWatch filter pattern fits 1,024 characters (PutMetricFilter limit)', () => {
+    const patterns = textBlocks(markdown);
+    expect(patterns.length).toBeGreaterThanOrEqual(10);
+    for (const { line, text } of patterns) {
+      expect(text.length, `line ${line}`).toBeLessThanOrEqual(1_024);
     }
   });
 });
