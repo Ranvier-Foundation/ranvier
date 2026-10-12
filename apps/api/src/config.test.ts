@@ -66,6 +66,32 @@ describe('loadConfig', () => {
       expect(parseWebOrigins('http://[::1]:3000')).toEqual(['http://[::1]:3000']);
     });
 
+    it('refuses http origins in production unless the host is loopback', () => {
+      for (const nodeEnv of ['production', ' Production ']) {
+        expect(() =>
+          loadConfig({ NODE_ENV: nodeEnv, WEB_ORIGINS: 'http://app.ranvier.example' }),
+        ).toThrow(/https in production/);
+      }
+      expect(
+        loadConfig({
+          NODE_ENV: 'production',
+          WEB_ORIGINS:
+            'https://app.ranvier.example,http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000',
+        }).WEB_ORIGINS,
+      ).toHaveLength(4);
+      // Outside production, http is accepted for any host.
+      expect(loadConfig({ WEB_ORIGINS: 'http://app.ranvier.example' }).WEB_ORIGINS).toEqual([
+        'http://app.ranvier.example',
+      ]);
+      expect(
+        loadConfig({ NODE_ENV: 'development', WEB_ORIGINS: 'http://192.168.1.5:3000' }).WEB_ORIGINS,
+      ).toEqual(['http://192.168.1.5:3000']);
+      // Look-alike loopback names are not loopback.
+      expect(() =>
+        loadConfig({ NODE_ENV: 'production', WEB_ORIGINS: 'http://localhost.evil.example' }),
+      ).toThrow(/https in production/);
+    });
+
     it.each([
       ['trailing slash', 'http://localhost:3000/'],
       ['path', 'https://app.ranvier.example/swap'],

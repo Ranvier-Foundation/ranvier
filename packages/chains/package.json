@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "verify:tokens": "tsc -p tsconfig.build.json && node dist/verify-cli.js"
   },
   "dependencies": {
     "@ranvier/types": "workspace:*"

@@ -1,19 +1,63 @@
 import type { ChainKey, TokenInfo, TokenTag } from '@ranvier/types';
 
+/** The OP Stack L2StandardBridge predeploy, which mints Base's standard bridged tokens. */
+export const OP_STANDARD_BRIDGE = '0x4200000000000000000000000000000000000010';
+/** Arbitrum One L2 gateways (read from each token's `l2Gateway()` when it was listed). */
+export const ARB_STANDARD_GATEWAY = '0x09e9222e96e7b4ae2a407b98d48e330053351eee';
+export const ARB_WETH_GATEWAY = '0x6c411ad3e74de3e7bd422b94a27770f5b86c623b';
+
 /**
- * Curated token list (ADR 0006). Checked-in data, never fetched at runtime.
+ * How a bridged token is linked to its L1 original, checked by `verify:tokens`:
+ * - `op-stack`: `remoteToken()` is `l1Address` and `bridge()` is `gateway`;
+ * - `arbitrum`: `l1Address()` is `l1Address` and `l2Gateway()` is `gateway`.
+ */
+export interface BridgeLink {
+  kind: 'op-stack' | 'arbitrum';
+  l1Address: string;
+  gateway: string;
+}
+
+/**
+ * A curated entry: the public `TokenInfo` plus verification data that is never served to
+ * clients (the API copies public fields one by one).
+ */
+export interface CuratedToken extends TokenInfo {
+  /** On-chain `symbol()` when the display symbol differs (e.g. `USD₮0` for USDT0). */
+  onchainSymbol?: string;
+  bridge?: BridgeLink;
+}
+
+/**
+ * Freezes an object and everything nested in it: the list is trusted data (its decimals feed
+ * fee tiers and route vetting), so runtime code must not be able to change it.
+ */
+function deepFreeze<T extends object>(value: T): T {
+  for (const nested of Object.values(value) as unknown[]) {
+    if (typeof nested === 'object' && nested !== null && !Object.isFrozen(nested)) {
+      deepFreeze(nested);
+    }
+  }
+  return Object.freeze(value);
+}
+
+/**
+ * Curated token list (ADR 0006). Checked-in data, never fetched at runtime, deep-frozen.
  *
- * Every address here was taken from an authoritative source and verified against at least two
- * more (DefiLlama metadata and an on-chain `symbol()`/`decimals()` read); the sources and dates
- * are in the PR that added the token. Adding, changing or removing an entry follows
- * docs/runbooks/token-list.md and goes to the security reviewer: `decimals` here are trusted
- * input to fee tiers and route vetting, and become `knownDecimals` in the chain registry.
+ * Adding, changing or removing an entry follows docs/runbooks/token-list.md, which also holds
+ * each token's sources, verification date and risk record (issuer powers such as upgrades,
+ * pausing, blacklisting or minting, and the decision that accepted them). Every change runs
+ * `pnpm --filter @ranvier/chains verify:tokens` and goes to the security reviewer: `decimals`
+ * here are trusted input to fee tiers and route vetting, and become `knownDecimals` in the
+ * chain registry. The `stablecoin` tag must match the registry's `stablecoins` (fee data).
  *
  * Rules: EVM addresses lowercase; the native coin spelled `native`; one entry per address and
  * per symbol on a chain; no rebasing or fee-on-transfer tokens (the fee wrapper refuses them).
  * Solana is not listed yet.
  */
-const native = (chain: ChainKey, symbol: string, name: string, decimals: number): TokenInfo => ({
+/** Coinbase Wrapped BTC: one address on Ethereum, Base and Arbitrum One. */
+const CBBTC = '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf';
+
+const native = (chain: ChainKey, symbol: string, name: string, decimals: number): CuratedToken => ({
   chain,
   address: 'native',
   symbol,
@@ -22,7 +66,7 @@ const native = (chain: ChainKey, symbol: string, name: string, decimals: number)
   tags: ['native'],
 });
 
-export const TOKEN_LIST: readonly TokenInfo[] = [
+export const TOKEN_LIST: readonly CuratedToken[] = deepFreeze<CuratedToken[]>([
   // Ethereum
   native('evm:1', 'ETH', 'Ether', 18),
   {
@@ -86,6 +130,14 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     decimals: 18,
   },
 
+  {
+    chain: 'evm:1',
+    address: CBBTC,
+    symbol: 'cbBTC',
+    name: 'Coinbase Wrapped BTC',
+    decimals: 8,
+  },
+
   // Base
   native('evm:8453', 'ETH', 'Ether', 18),
   {
@@ -111,6 +163,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Dai Stablecoin',
     decimals: 18,
     tags: ['stablecoin', 'bridged'],
+    bridge: {
+      kind: 'op-stack',
+      l1Address: '0x6b175474e89094c44da98b954eedeac495271d0f',
+      gateway: OP_STANDARD_BRIDGE,
+    },
   },
   {
     chain: 'evm:8453',
@@ -126,6 +183,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Uniswap',
     decimals: 18,
     tags: ['bridged'],
+    bridge: {
+      kind: 'op-stack',
+      l1Address: '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984',
+      gateway: OP_STANDARD_BRIDGE,
+    },
   },
   {
     chain: 'evm:8453',
@@ -133,6 +195,14 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     symbol: 'AERO',
     name: 'Aerodrome',
     decimals: 18,
+  },
+
+  {
+    chain: 'evm:8453',
+    address: CBBTC,
+    symbol: 'cbBTC',
+    name: 'Coinbase Wrapped BTC',
+    decimals: 8,
   },
 
   // Arbitrum One
@@ -144,6 +214,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Wrapped Ether',
     decimals: 18,
     tags: ['wrapped-native'],
+    bridge: {
+      kind: 'arbitrum',
+      l1Address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+      gateway: ARB_WETH_GATEWAY,
+    },
   },
   {
     chain: 'evm:42161',
@@ -158,6 +233,7 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     chain: 'evm:42161',
     address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
     symbol: 'USDT0',
+    onchainSymbol: 'USD₮0',
     name: 'USD₮0',
     decimals: 6,
     tags: ['stablecoin'],
@@ -177,6 +253,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Wrapped BTC',
     decimals: 8,
     tags: ['bridged'],
+    bridge: {
+      kind: 'arbitrum',
+      l1Address: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599',
+      gateway: ARB_STANDARD_GATEWAY,
+    },
   },
   {
     chain: 'evm:42161',
@@ -185,6 +266,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'ChainLink Token',
     decimals: 18,
     tags: ['bridged'],
+    bridge: {
+      kind: 'arbitrum',
+      l1Address: '0x514910771af9ca656af840dff83e8264ecf986ca',
+      gateway: ARB_STANDARD_GATEWAY,
+    },
   },
   {
     chain: 'evm:42161',
@@ -193,6 +279,11 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Uniswap',
     decimals: 18,
     tags: ['bridged'],
+    bridge: {
+      kind: 'arbitrum',
+      l1Address: '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984',
+      gateway: ARB_STANDARD_GATEWAY,
+    },
   },
   {
     chain: 'evm:42161',
@@ -201,11 +292,21 @@ export const TOKEN_LIST: readonly TokenInfo[] = [
     name: 'Arbitrum',
     decimals: 18,
   },
-];
+  {
+    chain: 'evm:42161',
+    address: CBBTC,
+    symbol: 'cbBTC',
+    name: 'Coinbase Wrapped BTC',
+    decimals: 8,
+  },
+]);
 
 const hasTag = (token: TokenInfo, tag: TokenTag): boolean => token.tags?.includes(tag) ?? false;
 
-/** Natives first, then stablecoins, then the rest; by symbol (unique per chain) in a group. */
+/**
+ * Natives first, then stablecoins, then the rest; by case-insensitive symbol (unique per chain)
+ * within a group.
+ */
 function rank(token: TokenInfo): number {
   if (hasTag(token, 'native')) return 0;
   if (hasTag(token, 'stablecoin')) return 1;
@@ -215,11 +316,13 @@ function rank(token: TokenInfo): number {
 function compareTokens(a: TokenInfo, b: TokenInfo): number {
   const byRank = rank(a) - rank(b);
   if (byRank !== 0) return byRank;
-  return a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0;
+  const x = a.symbol.toLowerCase();
+  const y = b.symbol.toLowerCase();
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 /** The curated tokens of a chain in display order. Empty for a chain with no list. */
-export function listTokens(chain: ChainKey): readonly TokenInfo[] {
+export function listTokens(chain: ChainKey): readonly CuratedToken[] {
   return TOKEN_LIST.filter((t) => t.chain === chain).sort(compareTokens);
 }
 
@@ -247,10 +350,10 @@ export const MIN_NAME_QUERY_LENGTH = 2;
  * matches symbols by case-insensitive substring and, from two characters, names as well.
  * Results keep display order.
  */
-export function searchTokens(chain: ChainKey, query: string, limit: number): TokenInfo[] {
+export function searchTokens(chain: ChainKey, query: string, limit: number): CuratedToken[] {
   const tokens = listTokens(chain);
   const q = query.trim().toLowerCase();
-  let matches: readonly TokenInfo[];
+  let matches: readonly CuratedToken[];
   if (q === '') {
     matches = tokens;
   } else if (FULL_EVM_ADDRESS.test(q)) {

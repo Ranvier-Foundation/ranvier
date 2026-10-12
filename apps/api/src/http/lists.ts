@@ -3,8 +3,12 @@ import type { ChainFamily, ChainKey, TokenInfo, TokenTag } from '@ranvier/types'
 import type { FastifyInstance } from 'fastify';
 import { invalidRequest, tokensQuerySchema } from './schemas.js';
 
-/** Static data: browsers and shared caches may keep list responses for five minutes. */
-export const LIST_CACHE_CONTROL = 'public, max-age=300';
+/**
+ * Static data: the browser may keep list responses for five minutes. `private`, so no shared
+ * cache stores them: a CDN put in front of the API must key on Origin (the responses carry
+ * `Vary: Origin` and per-origin CORS headers) or bypass caching for /v1/* (ADR 0006).
+ */
+export const LIST_CACHE_CONTROL = 'private, max-age=300';
 
 export interface ChainView {
   key: ChainKey;

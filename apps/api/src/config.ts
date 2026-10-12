@@ -61,6 +61,15 @@ export function parseWebOrigins(raw: string): string[] {
   return origins;
 }
 
+/** Loopback hosts, where plain http is acceptable even in production (local development). */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** True for an https origin, or an http origin on a loopback host. */
+export function isSecureOrLoopbackOrigin(origin: string): boolean {
+  const url = new URL(origin);
+  return url.protocol === 'https:' || LOOPBACK_HOSTS.has(url.hostname);
+}
+
 const webOrigins = z.string().transform((raw, ctx) => {
   try {
     return parseWebOrigins(raw);
@@ -130,8 +139,22 @@ const envSchema = z
      * cross-origin access. Never a wildcard; credentials are never allowed.
      */
     WEB_ORIGINS: webOrigins.default([]),
+    /** Only `production` (trimmed, any case) changes behaviour here. */
+    NODE_ENV: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    // In production a browser origin must be https, unless it is a loopback host.
+    if (env.NODE_ENV?.trim().toLowerCase() === 'production') {
+      for (const origin of env.WEB_ORIGINS) {
+        if (!isSecureOrLoopbackOrigin(origin)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['WEB_ORIGINS'],
+            message: `WEB_ORIGINS must use https in production (loopback excepted): ${origin}`,
+          });
+        }
+      }
+    }
     // Exactly one signer, and a KMS signer needs its region. These refuse to start rather than
     // pick one silently.
     if (env.KMS_KEY_ID && env.QUOTE_SIGNER_PRIVATE_KEY) {
