@@ -1,4 +1,5 @@
 import type { ChainFamily, ChainKey } from '@ranvier/types';
+import { listedDecimals } from './tokens.js';
 
 export interface ChainConfig {
   key: ChainKey;
@@ -12,8 +13,9 @@ export interface ChainConfig {
   /** Allowlisted major stablecoins (spec section 2: stablecoin fee). */
   stablecoins: Record<string, string>;
   /**
-   * Checked-in decimals for every token this registry names (stablecoins, wrapped native),
-   * keyed by normalised address. Oracle metadata that disagrees is refused (ADR 0004).
+   * Checked-in decimals for every token this registry or the curated token list names, keyed by
+   * normalised address. Oracle metadata that disagrees is refused (ADR 0004). For chains with a
+   * curated list it is derived from that list (ADR 0006), so there is one source.
    */
   knownDecimals: Record<string, number>;
   explorer: string;
@@ -39,12 +41,7 @@ export const CHAINS: readonly ChainConfig[] = [
       USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
       DAI: '0x6b175474e89094c44da98b954eedeac495271d0f',
     },
-    knownDecimals: {
-      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 18, // WETH
-      '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 6, // USDC
-      '0xdac17f958d2ee523a2206206994597c13d831ec7': 6, // USDT
-      '0x6b175474e89094c44da98b954eedeac495271d0f': 18, // DAI
-    },
+    knownDecimals: listedDecimals('evm:1'),
     explorer: 'https://etherscan.io',
     defillama: 'ethereum',
   },
@@ -56,10 +53,7 @@ export const CHAINS: readonly ChainConfig[] = [
     nativeDecimals: 18,
     wrappedNative: '0x4200000000000000000000000000000000000006',
     stablecoins: { USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' },
-    knownDecimals: {
-      '0x4200000000000000000000000000000000000006': 18, // WETH
-      '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 6, // USDC
-    },
+    knownDecimals: listedDecimals('evm:8453'),
     explorer: 'https://basescan.org',
     defillama: 'base',
   },
@@ -71,10 +65,7 @@ export const CHAINS: readonly ChainConfig[] = [
     nativeDecimals: 18,
     wrappedNative: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
     stablecoins: { USDC: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' },
-    knownDecimals: {
-      '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 18, // WETH
-      '0xaf88d065e77c8cc2239327c5edb3a432268e5831': 6, // USDC
-    },
+    knownDecimals: listedDecimals('evm:42161'),
     explorer: 'https://arbiscan.io',
     defillama: 'arbitrum',
   },
@@ -89,6 +80,7 @@ export const CHAINS: readonly ChainConfig[] = [
       USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     },
+    // No curated Solana list yet: the registry's own tokens only.
     knownDecimals: {
       So11111111111111111111111111111111111111112: 9, // wSOL
       EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 6, // USDC

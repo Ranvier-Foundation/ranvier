@@ -20,6 +20,22 @@ export interface Token extends TokenRef {
   decimals: number;
 }
 
+/**
+ * Display and ordering tags for a curated token. Tags never change fees: the stablecoin fee
+ * uses the registry's `stablecoins` allowlist only (spec section 2).
+ */
+export type TokenTag = 'native' | 'wrapped-native' | 'stablecoin' | 'bridged';
+
+/**
+ * A token from the curated, checked-in token list (ADR 0006). Its `decimals` are trusted data:
+ * the price oracle's decimals must agree with them (ADR 0004).
+ */
+export interface TokenInfo extends Token {
+  name: string;
+  logoUri?: string;
+  tags?: readonly TokenTag[];
+}
+
 /** Integer cents. Never use floats for money. */
 export type UsdCents = bigint;
 

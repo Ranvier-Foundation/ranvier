@@ -42,6 +42,8 @@ const app = buildServer({
   maxSlippageBps: config.MAX_SLIPPAGE_BPS,
   maxOracleDeviationBps: config.MAX_ORACLE_DEVIATION_BPS,
   logger: true,
+  webOrigins: config.WEB_ORIGINS,
+  servedChainIds: config.ZEROX_CHAIN_IDS,
   ...(signing ? { signing } : {}),
 });
 
@@ -49,6 +51,7 @@ const app = buildServer({
 app.log.info(
   {
     providers: providers.map((p) => p.name),
+    webOrigins: config.WEB_ORIGINS,
     signer: signing?.signer.address ?? null,
     signerKind: signing?.signer.kind ?? null,
     kmsKeyArn: signing?.signer instanceof KmsSigner ? signing.signer.keyArn : null,
