@@ -1,6 +1,6 @@
 import { chainFamily, isValidAddress, isValidTokenAddress, NATIVE } from '@ranvier/chains';
 import type { ChainKey } from '@ranvier/types';
-import { z } from 'zod';
+import { z, type ZodError } from 'zod';
 import { HARD_MAX_SLIPPAGE_BPS } from '../config.js';
 
 const MAX_UINT256 = 2n ** 256n - 1n;
@@ -10,8 +10,14 @@ const bigintString = z
   .regex(/^\d{1,78}$/, 'must be a non-negative integer string')
   .transform((s) => BigInt(s));
 
+/**
+ * `z.templateLiteral` does not enforce `.positive()` on the number part, so EVM keys are also
+ * matched against a canonical decimal form: `evm:01`, `evm:0`, `evm:-1` and `evm:1.5` fail.
+ */
 const chainKey = z.union([
-  z.templateLiteral(['evm:', z.number().int().positive()]),
+  z
+    .templateLiteral(['evm:', z.number().int().positive()])
+    .refine((k) => /^evm:[1-9]\d{0,9}$/.test(k), 'must be evm:<chain ID>'),
   z.literal('solana:mainnet'),
 ]);
 
@@ -63,4 +69,13 @@ export function quoteRequestSchema(opts: QuoteSchemaOptions) {
       path: ['taker'],
     })
     .transform((r) => ({ ...r, taker: normalise(r.sellToken.chain, r.taker) }));
+}
+
+/**
+ * A 400 body with a stable code and the offending field paths only (e.g. `sellToken.address`).
+ * Validation messages are not returned; paths name the client's own input and leak nothing.
+ */
+export function invalidRequest(error: ZodError): { error: 'invalid_request'; fields: string[] } {
+  const fields = [...new Set(error.issues.map((i) => i.path.map(String).join('.') || '(body)'))];
+  return { error: 'invalid_request', fields };
 }

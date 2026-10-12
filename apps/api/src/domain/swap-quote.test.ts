@@ -4,8 +4,11 @@ import { decodeFunctionData, keccak256, padHex, recoverTypedDataAddress, zeroAdd
 import {
   assertLocalSigningChains,
   LocalKeySigner,
+  LOCAL_SIGNER_DEFAULT_CHAINS,
   NEVER_LOCAL_CHAINS,
 } from '../adapters/signers/local-key.js';
+import { CHAINS } from '@ranvier/chains';
+import { TRUSTED_ROUTERS, ZEROX_SETTLERS } from '../trusted-routers.js';
 import type { VettedRoute } from './route-safety.js';
 import {
   buildSignedSwap,
@@ -173,7 +176,9 @@ describe('LocalKeySigner', () => {
   });
 
   it('refuses to run in production', () => {
-    expect(() => new LocalKeySigner(key, { nodeEnv: 'production' })).toThrow('KMS');
+    for (const nodeEnv of ['production', 'Production', ' PRODUCTION ', 'production\n']) {
+      expect(() => new LocalKeySigner(key, { nodeEnv }), nodeEnv).toThrow('KMS');
+    }
   });
 
   it('reads NODE_ENV when not given explicitly', () => {
@@ -199,8 +204,36 @@ describe('LocalKeySigner', () => {
       await expect(s.signTypedData(typed(id))).rejects.toThrow(`refuses chain ${id}`);
     }
     expect(() => new LocalKeySigner(key, { nodeEnv: 'test', allowedChainIds: [31337, 1] })).toThrow(
-      'mainnet chain(s) 1',
+      'may not sign for chain(s) 1',
     );
+  });
+
+  it('only accepts a subset of the known testnets and local chains', () => {
+    // Unknown chains are refused too, not only known mainnets (allowlist, not denylist).
+    for (const id of [5, 17000, 999_999, 1337]) {
+      expect(
+        () => new LocalKeySigner(key, { nodeEnv: 'test', allowedChainIds: [id] }),
+        String(id),
+      ).toThrow(`may not sign for chain(s) ${id}`);
+    }
+    expect(
+      new LocalKeySigner(key, { nodeEnv: 'test', allowedChainIds: [11155111] }).canSign(11155111),
+    ).toBe(true);
+  });
+
+  it('keeps the allowed set and every live chain disjoint', () => {
+    expect([...LOCAL_SIGNER_DEFAULT_CHAINS].sort()).toEqual(
+      [11155111, 31337, 421614, 84532].sort(),
+    );
+    const live = [
+      ...Object.keys(ZEROX_SETTLERS).map(Number),
+      ...TRUSTED_ROUTERS.keys(),
+      ...CHAINS.filter((c) => c.family === 'evm').map((c) => Number(c.key.slice(4))),
+    ];
+    for (const id of live) expect(NEVER_LOCAL_CHAINS.has(id), String(id)).toBe(true);
+    for (const id of LOCAL_SIGNER_DEFAULT_CHAINS) {
+      expect(NEVER_LOCAL_CHAINS.has(id), String(id)).toBe(false);
+    }
   });
 
   it('refuses chains outside its allowlist and typed data without a chain', async () => {

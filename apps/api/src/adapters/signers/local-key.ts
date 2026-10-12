@@ -2,8 +2,12 @@ import { CHAINS } from '@ranvier/chains';
 import type { Hex, TypedDataDefinition } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { QuoteSigner } from '../../ports/quote-signer.js';
+import { TRUSTED_ROUTERS, ZEROX_SETTLERS } from '../../trusted-routers.js';
 
-/** Testnets and local chains a key from the environment may sign for by default. */
+/**
+ * The only chains a key from the environment may ever sign for: known testnets and local
+ * chains. `LOCAL_SIGNER_CHAIN_IDS` may narrow this set, never extend it.
+ */
 export const LOCAL_SIGNER_DEFAULT_CHAINS: readonly number[] = [
   84532, // Base Sepolia
   11155111, // Sepolia
@@ -11,9 +15,12 @@ export const LOCAL_SIGNER_DEFAULT_CHAINS: readonly number[] = [
   31337, // Anvil / Hardhat (including a forked mainnet run under its own chain ID)
 ];
 
+const LOCAL_SIGNER_ALLOWED: ReadonlySet<number> = new Set(LOCAL_SIGNER_DEFAULT_CHAINS);
+
 /**
- * Chains a local key may never sign for, whatever the configuration: well-known mainnets
- * plus every EVM chain in the registry (the registry only lists chains Ranvier serves).
+ * Chains a local key may never sign for: well-known mainnets, every EVM chain in the
+ * registry, and every chain with trusted routers or Settlers (all live chains). A second line
+ * of defence behind the allowlist; a test checks the two sets never overlap.
  */
 export const NEVER_LOCAL_CHAINS: ReadonlySet<number> = new Set([
   1, // Ethereum
@@ -24,6 +31,8 @@ export const NEVER_LOCAL_CHAINS: ReadonlySet<number> = new Set([
   42161, // Arbitrum One
   43114, // Avalanche C-Chain
   ...CHAINS.flatMap((c) => (c.family === 'evm' ? [Number(c.key.slice('evm:'.length))] : [])),
+  ...Object.keys(ZEROX_SETTLERS).map(Number),
+  ...TRUSTED_ROUTERS.keys(),
 ]);
 
 export interface LocalKeySignerOptions {
@@ -45,15 +54,18 @@ export class LocalKeySigner implements QuoteSigner {
 
   constructor(privateKey: Hex, opts: LocalKeySignerOptions = {}) {
     const nodeEnv = 'nodeEnv' in opts ? opts.nodeEnv : process.env.NODE_ENV;
-    if (nodeEnv === 'production') {
+    if (nodeEnv?.trim().toLowerCase() === 'production') {
       throw new Error('LocalKeySigner must not be used in production; use a KMS signer');
     }
     const allowed = opts.allowedChainIds ?? LOCAL_SIGNER_DEFAULT_CHAINS;
-    const forbidden = allowed.filter((id) => NEVER_LOCAL_CHAINS.has(id));
+    const forbidden = allowed.filter(
+      (id) => !LOCAL_SIGNER_ALLOWED.has(id) || NEVER_LOCAL_CHAINS.has(id),
+    );
     if (forbidden.length > 0) {
       throw new Error(
-        `LocalKeySigner may not sign for mainnet chain(s) ${forbidden.join(', ')}; ` +
-          'use a KMS signer, or a local fork (chain ID 31337) for end-to-end tests',
+        `LocalKeySigner may not sign for chain(s) ${forbidden.join(', ')}: only known testnets ` +
+          `and local chains (${LOCAL_SIGNER_DEFAULT_CHAINS.join(', ')}) are allowed. Use a KMS ` +
+          'signer, or a local fork (chain ID 31337) for end-to-end tests',
       );
     }
     this.allowed = new Set(allowed);

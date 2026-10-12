@@ -130,9 +130,47 @@ describe('http', () => {
     });
   });
 
-  it('rejects invalid input', async () => {
-    expect((await post(deps(), { sellAmount: '-1' }, '/v1/fees/preview')).statusCode).toBe(400);
-    expect((await post(deps(), { ...quoteBody, sellAmount: '0' })).statusCode).toBe(400);
+  it('rejects invalid input with a stable code and field paths only', async () => {
+    const preview = await post(deps(), { sellAmount: '-1' }, '/v1/fees/preview');
+    expect(preview.statusCode).toBe(400);
+    expect(preview.json().error).toBe('invalid_request');
+    const zero = await post(deps(), { ...quoteBody, sellAmount: '0' });
+    expect(zero.statusCode).toBe(400);
+    expect(zero.json()).toEqual({ error: 'invalid_request', fields: ['sellAmount'] });
+    const several = await post(deps(), {
+      ...quoteBody,
+      sellToken: { chain: 'evm:1', address: 'nope' },
+      slippageBps: 99_999,
+    });
+    expect(several.json()).toEqual({
+      error: 'invalid_request',
+      fields: ['sellToken.address', 'slippageBps'],
+    });
+    expect(several.body).not.toContain('message');
+    const body = await post(deps(), []);
+    expect(body.json()).toEqual({ error: 'invalid_request', fields: ['(body)'] });
+  });
+
+  it('rejects non-canonical EVM chain keys at the edge', async () => {
+    const calls: TokenRef[] = [];
+    const d = deps({ prices: oracle(2_000n, calls) });
+    for (const chain of [
+      'evm:01',
+      'evm:0',
+      'evm:-1',
+      'evm:1.5',
+      'evm:',
+      'evm:1e3',
+      'evm:12345678901',
+    ]) {
+      const res = await post(d, {
+        ...quoteBody,
+        sellToken: { chain, address: 'native' },
+        buyToken: { chain, address: USDC_ADDRESS },
+      });
+      expect(res.statusCode, chain).toBe(400);
+    }
+    expect(calls).toHaveLength(0);
   });
 
   it('returns 503 when routing is not configured', async () => {
@@ -408,6 +446,48 @@ describe('http', () => {
       ];
       for (const body of bad) expect((await post(d, body)).statusCode).toBe(400);
       expect(calls).toHaveLength(0);
+    });
+
+    it('spells native only as `native`: EVM placeholders are refused on both sides', async () => {
+      const priced: TokenRef[] = [];
+      const quoted: QuoteRequest[] = [];
+      const d = deps({
+        prices: oracle(2_000n, priced),
+        providers: [honestProvider(2_000n, () => ({}), quoted)],
+      });
+      const placeholders = [
+        '0x0000000000000000000000000000000000000000',
+        '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+      ];
+      for (const address of placeholders) {
+        const asSell = await post(d, { ...quoteBody, sellToken: { chain: 'evm:1', address } });
+        expect(asSell.json(), address).toEqual({
+          error: 'invalid_request',
+          fields: ['sellToken.address'],
+        });
+        const asBuy = await post(d, {
+          ...quoteBody,
+          sellToken: USDC,
+          buyToken: { chain: 'evm:1', address },
+        });
+        expect(asBuy.json(), address).toEqual({
+          error: 'invalid_request',
+          fields: ['buyToken.address'],
+        });
+        // A placeholder can never be mistaken for WETH's wrap partner either.
+        const wrap = await post(d, {
+          ...quoteBody,
+          sellToken: { chain: 'evm:1', address },
+          buyToken: WETH,
+        });
+        expect(wrap.statusCode).toBe(400);
+      }
+      expect(priced).toHaveLength(0);
+      expect(quoted).toHaveLength(0);
+      // `native` still wraps directly and still routes through vetting.
+      expect((await post(d, { ...quoteBody, buyToken: WETH })).json().direct.kind).toBe('wrap');
+      expect((await post(d, quoteBody)).json().best.provider).toBe('fake');
     });
 
     it('accepts Solana tokens and takers in base58', async () => {

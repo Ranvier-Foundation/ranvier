@@ -7,6 +7,7 @@ import {
   isValidAddress,
   isValidTokenAddress,
   isWrappedNative,
+  knownDecimals,
 } from './registry.js';
 
 describe('chain registry', () => {
@@ -72,5 +73,29 @@ describe('chain registry', () => {
     expect(isValidTokenAddress('evm', 'native')).toBe(true);
     expect(isValidTokenAddress('solana', 'native')).toBe(true);
     expect(isValidTokenAddress('evm', 'NATIVE')).toBe(false);
+  });
+
+  it('refuses EVM native placeholders as token addresses', () => {
+    expect(isValidTokenAddress('evm', '0x0000000000000000000000000000000000000000')).toBe(false);
+    expect(isValidTokenAddress('evm', '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE')).toBe(false);
+    expect(isValidTokenAddress('evm', '0x0000000000000000000000000000000000000001')).toBe(true);
+  });
+
+  it('knows decimals for every stablecoin and wrapped native in the registry', () => {
+    for (const chain of CHAINS) {
+      const listed = [...Object.values(chain.stablecoins), chain.wrappedNative];
+      for (const address of listed) {
+        expect(knownDecimals(chain.key, address), `${chain.key} ${address}`).toBeTypeOf('number');
+      }
+      expect(Object.keys(chain.knownDecimals).sort()).toEqual([...listed].sort());
+    }
+  });
+
+  it('looks up known decimals case-insensitively on EVM, and natives from the registry', () => {
+    expect(knownDecimals('evm:1', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48')).toBe(6);
+    expect(knownDecimals('evm:1', 'native')).toBe(18);
+    expect(knownDecimals('solana:mainnet', 'native')).toBe(9);
+    expect(knownDecimals('evm:1', '0x0000000000000000000000000000000000000001')).toBeUndefined();
+    expect(knownDecimals('evm:5', 'native')).toBeUndefined();
   });
 });

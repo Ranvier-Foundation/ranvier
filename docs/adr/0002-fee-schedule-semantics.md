@@ -17,7 +17,7 @@ The fee schedule sets tiers and special cases. Some edge cases needed a decision
 
 **First-swap promotion.** On a wallet's first swap, the first $1,000 is free and the base rate applies only to the part above $1,000. The tier is still chosen by the full swap size. Examples: a $1,500 first swap at 20 bps pays on $500 ($1.00); a $50,000 first swap pays 15 bps on $49,000 ($73.50).
 
-**Rounding.** Fees are computed in input-token base units and every division rounds down, in the user's favour. USD values are integer cents.
+**Rounding.** Fees are computed in input-token base units and every division rounds down, in the user's favour. USD values are integer cents. (Clarified in ADR 0004: the USD value is floored to whole cents before the tier is chosen. That is not always in the user's favour. A swap less than one cent above a tier boundary can land in the dearer tier, but never in a cheaper one.)
 
 **Signed fee amount.** A partial waiver gives fees that are not a whole number of basis points, so the backend signs the exact fee amount into each quote (EIP-712) rather than a rate. The fee wrapper checks that the amount is at most 0.3% of the input (`MAX_FEE_BPS`) and charges it exactly.
 

@@ -1,4 +1,4 @@
-import { decodeFunctionData, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, type Hex } from 'viem';
 
 /**
  * 0x AllowanceHolder entry point, as in 0x-settler `src/allowanceholder/AllowanceHolderBase.sol`:
@@ -77,12 +77,25 @@ export interface SettlerExecute {
 
 const lower = (a: string): string => a.toLowerCase();
 
-/** Decodes AllowanceHolder `exec` calldata; addresses are lowercased. Throws otherwise. */
+/**
+ * Re-encoding the decoded arguments must reproduce the input byte for byte. This refuses
+ * non-canonical calldata (dirty high bits in addresses, unusual offsets, trailing bytes) that
+ * a lenient decoder accepts but that could be read differently on-chain.
+ */
+function requireCanonical(input: Hex, reencoded: Hex): void {
+  if (input.toLowerCase() !== reencoded.toLowerCase()) throw new Error('non-canonical calldata');
+}
+
+/** Decodes canonical AllowanceHolder `exec` calldata; addresses are lowercased. Throws otherwise. */
 export function decodeAllowanceHolderExec(data: Hex): AllowanceHolderExec {
   if (data.slice(0, 10).toLowerCase() !== ALLOWANCE_HOLDER_EXEC_SELECTOR) {
     throw new Error('not an AllowanceHolder exec call');
   }
   const { args } = decodeFunctionData({ abi: ALLOWANCE_HOLDER_ABI, data });
+  requireCanonical(
+    data,
+    encodeFunctionData({ abi: ALLOWANCE_HOLDER_ABI, functionName: 'exec', args }),
+  );
   const [operator, token, amount, target, inner] = args;
   return {
     operator: lower(operator),
@@ -93,12 +106,13 @@ export function decodeAllowanceHolderExec(data: Hex): AllowanceHolderExec {
   };
 }
 
-/** Decodes Settler `execute` calldata; addresses are lowercased. Throws otherwise. */
+/** Decodes canonical Settler `execute` calldata; addresses are lowercased. Throws otherwise. */
 export function decodeSettlerExecute(data: Hex): SettlerExecute {
   if (data.slice(0, 10).toLowerCase() !== SETTLER_EXECUTE_SELECTOR) {
     throw new Error('not a Settler execute call');
   }
   const { args } = decodeFunctionData({ abi: SETTLER_ABI, data });
+  requireCanonical(data, encodeFunctionData({ abi: SETTLER_ABI, functionName: 'execute', args }));
   const [slippage] = args;
   return {
     recipient: lower(slippage.recipient),

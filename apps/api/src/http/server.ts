@@ -11,7 +11,7 @@ import { buildDirectWrap } from '../domain/wrap.js';
 import type { PriceOracle, SwapHistory, TokenPrice } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
 import type { QuoteSigner } from '../ports/quote-signer.js';
-import { feePreviewSchema, quoteRequestSchema } from './schemas.js';
+import { feePreviewSchema, invalidRequest, quoteRequestSchema } from './schemas.js';
 
 export interface ServerDeps {
   providers: readonly QuoteProvider[];
@@ -76,16 +76,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.post('/v1/fees/preview', async (req, reply) => {
     const parsed = feePreviewSchema.safeParse(req.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+    if (!parsed.success) return reply.code(400).send(invalidRequest(parsed.error));
     const { usdValueCents, ...rest } = parsed.data;
     return toJson(quoteFee({ ...rest, usdValue: usdValueCents }));
   });
 
   app.post('/v1/quotes', async (req, reply) => {
     const parsed = quoteSchema.safeParse(req.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+    if (!parsed.success) return reply.code(400).send(invalidRequest(parsed.error));
     const request = parsed.data;
 
     // Native wrap/unwrap is free by the fee schedule and 1:1 on the wrapped native contract,

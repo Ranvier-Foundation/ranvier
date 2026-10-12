@@ -66,7 +66,10 @@ export function feeAmount(sellAmount: bigint, bps: number): bigint {
 /**
  * Fee for a swap. On a wallet's first swap the first $1,000 is free and only the
  * part above it pays the base rate; the rate tier still follows the full swap size.
- * Every division rounds down, in the user's favour.
+ * Every division here rounds down, in the user's favour. The USD value that picks the tier is
+ * itself rounded down to whole cents by the caller; since cheaper tiers need a larger value,
+ * that can only put a swap within one cent above a boundary in the dearer tier, never the
+ * cheaper one. On a first swap it can waive under one cent more than $1,000 (ADR 0004).
  */
 export function quoteFee(input: FeeInput): FeeQuote {
   const { bps, reason } = feeRate(input);
