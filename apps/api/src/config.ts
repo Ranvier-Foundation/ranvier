@@ -9,6 +9,13 @@ const envSchema = z.object({
   /** Fee wrapper address (same on every EVM chain via CREATE2). */
   FEE_WRAPPER_ADDRESS: address.optional(),
   ZEROX_API_KEY: z.string().min(1).optional(),
+  /** Development and testnets only; production signs through a KMS. */
+  QUOTE_SIGNER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
+  /** How long a signed quote stays valid. */
+  QUOTE_TTL_SECONDS: z.coerce.number().int().min(10).max(600).default(60),
   /** Comma-separated EVM chain IDs where 0x and the fee wrapper are both live. */
   ZEROX_CHAIN_IDS: z
     .string()

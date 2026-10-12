@@ -1,8 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { quoteFee } from '@ranvier/fees';
 import { compareProviderQuotes } from '../domain/orchestrator.js';
+import { buildSignedSwap, evmChainId } from '../domain/swap-quote.js';
 import type { PriceOracle, SwapHistory } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
+import type { QuoteSigner } from '../ports/quote-signer.js';
+import type { Hex } from 'viem';
+import { randomBytes } from 'node:crypto';
 import { feePreviewSchema, quoteRequestSchema } from './schemas.js';
 
 export interface ServerDeps {
@@ -11,6 +15,18 @@ export interface ServerDeps {
   history?: SwapHistory;
   providerTimeoutMs?: number;
   logger?: boolean;
+  /** When set, quotes include a signed fee-wrapper transaction. */
+  signing?: {
+    feeWrapper: Hex;
+    signer: QuoteSigner;
+    ttlSeconds: number;
+    now?: () => number;
+    nonce?: () => bigint;
+  };
+}
+
+function randomNonce(): bigint {
+  return BigInt(`0x${randomBytes(32).toString('hex')}`);
 }
 
 /** JSON cannot carry bigint; send base-unit amounts as decimal strings. */
@@ -64,7 +80,24 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (!comparison.best) {
       return reply.code(502).send({ error: 'no_route', failures: comparison.failures });
     }
-    return toJson({ fee, ...comparison });
+    const signing = deps.signing;
+    const canSign =
+      signing &&
+      evmChainId(request.sellToken) !== undefined &&
+      request.buyToken.chain === request.sellToken.chain;
+    if (!canSign) return toJson({ fee, ...comparison });
+
+    const nowSeconds = Math.floor((signing.now ?? Date.now)() / 1000);
+    const swap = await buildSignedSwap({
+      request,
+      fee,
+      route: comparison.best,
+      feeWrapper: signing.feeWrapper,
+      signer: signing.signer,
+      deadline: BigInt(nowSeconds + signing.ttlSeconds),
+      nonce: (signing.nonce ?? randomNonce)(),
+    });
+    return toJson({ fee, ...comparison, swap });
   });
 
   return app;
