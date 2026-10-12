@@ -10,6 +10,8 @@ export interface ChainConfig {
   /** Allowlisted major stablecoins (spec section 2: stablecoin fee). */
   stablecoins: Record<string, string>;
   explorer: string;
+  /** Chain name in the DefiLlama coins API (price oracle). */
+  defillama: string;
 }
 
 /**
@@ -30,6 +32,7 @@ export const CHAINS: readonly ChainConfig[] = [
       DAI: '0x6b175474e89094c44da98b954eedeac495271d0f',
     },
     explorer: 'https://etherscan.io',
+    defillama: 'ethereum',
   },
   {
     key: 'evm:8453',
@@ -39,6 +42,7 @@ export const CHAINS: readonly ChainConfig[] = [
     wrappedNative: '0x4200000000000000000000000000000000000006',
     stablecoins: { USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' },
     explorer: 'https://basescan.org',
+    defillama: 'base',
   },
   {
     key: 'evm:42161',
@@ -48,6 +52,7 @@ export const CHAINS: readonly ChainConfig[] = [
     wrappedNative: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
     stablecoins: { USDC: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' },
     explorer: 'https://arbiscan.io',
+    defillama: 'arbitrum',
   },
   {
     key: 'solana:mainnet',
@@ -60,6 +65,7 @@ export const CHAINS: readonly ChainConfig[] = [
       USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     },
     explorer: 'https://solscan.io',
+    defillama: 'solana',
   },
 ];
 
