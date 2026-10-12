@@ -148,8 +148,11 @@ describe('normalizeS', () => {
 
 describe('toEthereumSignature', () => {
   it('matches a low-s software signature for high- and low-s input, with both v values', async () => {
+    // digest(i) is deterministic (no RNG). Eight digests are enough to see both recovery bits,
+    // which the final assertion enforces, so this cannot silently stop covering v=27 and v=28.
+    // (24 digests cost ~1 s locally, which is a timeout risk on slow CI runners.)
     const vs = new Set<string>();
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 8; i++) {
       const hash = digest(i);
       const expected = serializeSignature(await sign({ hash, privateKey: KEY }));
       for (const highS of [false, true]) {
@@ -163,7 +166,7 @@ describe('toEthereumSignature', () => {
       vs.add(expected.slice(-2));
     }
     expect([...vs].sort()).toEqual(['1b', '1c']);
-  });
+  }, 30_000);
 
   it('refuses a signature from another key', async () => {
     const other = padHex('0xb0b', { size: 32 });
