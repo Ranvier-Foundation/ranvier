@@ -93,6 +93,88 @@ describe('feeRate special cases', () => {
   });
 });
 
+describe('stablecoin allowlist per chain (spec section 2: USDC, USDT, DAI on every chain)', () => {
+  const tok = (
+    chain: Token['chain'],
+    address: string,
+    symbol: string,
+    decimals: number,
+  ): Token => ({
+    chain,
+    address,
+    symbol,
+    decimals,
+  });
+  const BASE_USDC = tok('evm:8453', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 'USDC', 6);
+  const BASE_DAI = tok('evm:8453', '0x50c5725949a6f0c72e6c4a641f24049a917db0cb', 'DAI', 18);
+  const ARB_USDC = tok('evm:42161', '0xaf88d065e77c8cc2239327c5edb3a432268e5831', 'USDC', 6);
+  const ARB_USDT0 = tok('evm:42161', '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', 'USDT0', 6);
+  const ARB_DAI = tok('evm:42161', '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1', 'DAI', 18);
+  const ARB_WETH = tok('evm:42161', '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', 'WETH', 18);
+  const CBBTC = tok('evm:8453', '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf', 'cbBTC', 8);
+  const USDC_1000 = 1_000_000_000n; // 1,000 USDC or USDT0 (6 decimals)
+  const DAI_1000 = 1_000n * 10n ** 18n; // 1,000 DAI (18 decimals)
+  const swap = (sellToken: Token, buyToken: Token, sellAmount: bigint, usdValue = 1_000_00n) =>
+    quoteFee({ sellToken, buyToken, sellAmount, usdValue, isFirstSwap: false });
+
+  it('charges exactly 5 bps for USDC <-> DAI on Base', () => {
+    expect(swap(BASE_USDC, BASE_DAI, USDC_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 500_000n,
+      waivedUsd: 0n,
+    });
+    expect(swap(BASE_DAI, BASE_USDC, DAI_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 5n * 10n ** 17n,
+      waivedUsd: 0n,
+    });
+  });
+
+  it('charges exactly 5 bps for USDC <-> USDT0 and DAI -> USDC on Arbitrum', () => {
+    expect(swap(ARB_USDC, ARB_USDT0, USDC_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 500_000n,
+      waivedUsd: 0n,
+    });
+    expect(swap(ARB_USDT0, ARB_USDC, USDC_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 500_000n,
+      waivedUsd: 0n,
+    });
+    expect(swap(ARB_DAI, ARB_USDC, DAI_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 5n * 10n ** 17n,
+      waivedUsd: 0n,
+    });
+  });
+
+  it('keeps the size tiers for a stablecoin against a non-stablecoin', () => {
+    expect(swap(BASE_USDC, BASE_WETH, USDC_1000)).toEqual({
+      bps: 20,
+      reason: 'tier-under-10k',
+      amount: 2_000_000n,
+      waivedUsd: 0n,
+    });
+    expect(swap(ARB_USDT0, ARB_WETH, USDC_1000).bps).toBe(20);
+    expect(swap(CBBTC, BASE_USDC, 10n ** 8n, 82_000_00n).bps).toBe(15);
+  });
+
+  it('pins current behaviour: a cross-chain pair of stablecoins also pays 5 bps', () => {
+    // isStablePair checks each token on its own chain; this test only documents it.
+    expect(swap(BASE_USDC, ARB_DAI, USDC_1000)).toEqual({
+      bps: 5,
+      reason: 'stablecoin',
+      amount: 500_000n,
+      waivedUsd: 0n,
+    });
+  });
+});
+
 describe('feeAmount', () => {
   it('floors to base units', () => {
     expect(feeAmount(1_000_000n, 20)).toBe(2_000n);

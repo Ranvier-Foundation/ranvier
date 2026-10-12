@@ -42,6 +42,27 @@ describe('security headers: connect-src', () => {
     expect(() => securityHeaders(value)).toThrow(/NEXT_PUBLIC_API_URL/);
   });
 
+  it('refuses plain http in a production build unless the host is loopback', () => {
+    for (const nodeEnv of ['production', ' PRODUCTION ']) {
+      expect(() => securityHeaders('http://api.ranvier.example', nodeEnv)).toThrow(
+        /https in production/,
+      );
+      expect(() => securityHeaders('http://localhost.evil.example', nodeEnv)).toThrow(
+        /https in production/,
+      );
+    }
+    expect(apiOrigin('https://api.ranvier.example', 'production')).toBe(
+      'https://api.ranvier.example',
+    );
+    for (const local of ['http://localhost:4000', 'http://127.0.0.1:4000', 'http://[::1]:4000']) {
+      expect(apiOrigin(local, 'production')).toBe(local);
+    }
+    expect(apiOrigin(undefined, 'production')).toBeUndefined();
+    // Development and test builds accept http for any host.
+    expect(apiOrigin('http://192.168.1.5:4000', 'development')).toBe('http://192.168.1.5:4000');
+    expect(apiOrigin('http://api.ranvier.example')).toBe('http://api.ranvier.example');
+  });
+
   it('leaves every other header and directive unchanged', () => {
     const without = securityHeaders(undefined);
     const withApi = securityHeaders('https://api.ranvier.example');

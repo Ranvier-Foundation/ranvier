@@ -58,7 +58,7 @@ describe('CORS (ADR 0006)', () => {
     const res = await call('GET', '/v1/tokens?chain=evm:1', {});
     expect(corsHeaders(res.headers)).toEqual([]);
     expect(res.headers.vary).toBe('Origin');
-    expect(res.headers['cache-control']).toBe('public, max-age=300');
+    expect(res.headers['cache-control']).toBe('private, max-age=300');
   });
 
   it('grants error responses too, so the web app can read the error code', async () => {
@@ -140,15 +140,28 @@ describe('CORS (ADR 0006)', () => {
     expect(corsHeaders(preflight.headers)).toEqual([]);
   });
 
-  it('appends Origin to an existing Vary header once', async () => {
+  it('appends Origin to an existing Vary header once, as a string or a list', async () => {
     const app = buildServer({ providers: [], webOrigins: [WEB] });
     app.get('/vary', async (_req, reply) => reply.header('vary', 'Accept-Encoding').send('x'));
     app.get('/vary-origin', async (_req, reply) => reply.header('vary', 'origin').send('x'));
     app.get('/vary-star', async (_req, reply) => reply.header('vary', '*').send('x'));
+    app.get('/vary-list', async (_req, reply) =>
+      reply.header('vary', ['Accept-Encoding', 'Accept-Language']).send('x'),
+    );
+    app.get('/vary-list-origin', async (_req, reply) =>
+      reply.header('vary', ['Accept-Encoding', 'Origin']).send('x'),
+    );
     expect((await app.inject({ url: '/vary', headers: { origin: WEB } })).headers.vary).toBe(
       'Accept-Encoding, Origin',
     );
     expect((await app.inject({ url: '/vary-origin' })).headers.vary).toBe('origin');
     expect((await app.inject({ url: '/vary-star' })).headers.vary).toBe('*');
+    expect((await app.inject({ url: '/vary-list' })).headers.vary).toBe(
+      'Accept-Encoding, Accept-Language, Origin',
+    );
+    expect((await app.inject({ url: '/vary-list-origin' })).headers.vary).toEqual([
+      'Accept-Encoding',
+      'Origin',
+    ]);
   });
 });

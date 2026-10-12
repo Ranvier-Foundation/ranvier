@@ -22,9 +22,12 @@ Two kinds of harm follow from a token list:
 
 - `TOKEN_LIST` in `packages/chains/src/tokens.ts` holds the native coin and a short list of established tokens for each chain the API quotes today: Ethereum, Base and Arbitrum One. Solana is not listed yet; the types (`TokenInfo` in `@ranvier/types`) already cover it.
 - The list is code, read at build time. It is not fetched from a remote token list at runtime. A fetched list would make its host, and every network hop to it, a trusted input that could swap an address or a decimals value without review.
-- Every entry is sourced from the issuer's documentation or a well-known curated list (Uniswap default list, CoinGecko list), and is then verified on its own against DefiLlama metadata and an on-chain `symbol()`/`decimals()` read. A token that cannot be verified from two sources is left out. The PR that adds a token records its sources and the date.
-- Tokens the fee wrapper cannot handle are left out: rebasing and fee-on-transfer tokens, which the wrapper refuses on-chain (`UnsupportedToken`). So are tokens whose issuer can freeze or pause transfers behind an upgradeable proxy, with one exception: the core stablecoins USDC and USDT (USDT0 on Arbitrum). Their issuers can upgrade, pause and blacklist them. We accept that, because a swap aggregator without them is not useful, and it is the trust model every user of these coins already accepts.
-- The `stablecoin` tag in the list is for display and ordering only. The 0.05% stablecoin fee still uses only the registry's `stablecoins` allowlist (spec section 2, ADR 0002). This ADR does not change the fee schedule.
+- Every entry is sourced from the issuer's documentation or a well-known curated list (Uniswap default list, CoinGecko list), and is then verified on its own against DefiLlama metadata and an on-chain `symbol()`/`decimals()` read. A token that cannot be verified from two sources is left out. The runbook records each token's sources, verification date and risk record in the repository.
+- `pnpm --filter @ranvier/chains verify:tokens` re-checks every entry on demand: on-chain `symbol()`, `name()` and `decimals()`, DefiLlama symbol, decimals and confidence, and the L1 link of bridged tokens. It exits non-zero on any mismatch or failed read. It needs the network, so it is not part of CI; the runbook makes it a required step for every list change and every release.
+- `TOKEN_LIST` is deep-frozen at runtime, like `FEE_SCHEDULE`, because its decimals are trusted data.
+- Tokens the fee wrapper cannot handle are left out: rebasing and fee-on-transfer tokens, which the wrapper refuses on-chain (`UnsupportedToken`).
+- **Issuer and governance powers need a recorded decision.** Any power held by a party that is not immutable code (upgrading the contract, pausing transfers, blacklisting holders, minting without a bound) must be named in the runbook's risk table, with the decision that accepted it. Most listed tokens have at least one such power: USDC, USDT, USDT0 and cbBTC are issuer-controlled (upgrade, pause, blacklist); AAVE, ARB and Arbitrum WETH are upgradeable by governance; Arbitrum's bridged tokens are beacon proxies of the bridge; WBTC on Ethereum can be paused by its owner; LINK on Base is minted by an owner-managed CCIP minter set. We accept these for established assets because a swap aggregator without them is not useful, and it is the trust model every holder of these assets already accepts. A token whose powers are unknown is not listed.
+- **Display and fees cannot drift.** The 0.05% stablecoin fee uses the registry's `stablecoins` allowlist (spec section 2, ADR 0002). A test requires that, on every chain with a list, the tokens tagged `stablecoin` are exactly that allowlist, keyed by symbol. Following spec section 2 ("USDC, USDT, DAI, etc."), the owner extended the allowlist to DAI on Base and Arbitrum and USDT0 on Arbitrum. The fee rules themselves did not change. A pair of stablecoins on two different chains also pays 5 bps, because each token is checked on its own chain; a fee test pins this.
 
 ### Decimals have one source
 
@@ -55,7 +58,7 @@ Both answer from checked-in data only. No provider, oracle or signer is called, 
 
   Order: the native coin, then stablecoins, then the rest, each group by symbol.
 
-- Both responses have `Cache-Control: public, max-age=300`. Error responses have no cache header.
+- Both responses have `Cache-Control: private, max-age=300`: the browser may keep them for five minutes, shared caches may not. Error responses have no cache header. If a shared cache or CDN is ever put in front of the API, it must key on `Origin` (responses carry per-origin CORS headers and `Vary: Origin`) or bypass caching for `/v1/*`.
 
 ### CORS
 
@@ -66,7 +69,8 @@ Both answer from checked-in data only. No provider, oracle or signer is called, 
   - credentials;
   - a wildcard or `null`;
   - a scheme other than http or https;
-  - an empty entry or a duplicate.
+  - an empty entry or a duplicate;
+  - under `NODE_ENV=production`, plain `http:` unless the host is loopback (`localhost`, `127.0.0.1`, `[::1]`).
 
   Unset means no cross-origin access, and no CORS code is registered.
 
@@ -77,7 +81,7 @@ Both answer from checked-in data only. No provider, oracle or signer is called, 
 
 ### Web CSP
 
-`apps/web/next.config.ts` adds the origin of `NEXT_PUBLIC_API_URL` to `connect-src`, read at build or start. Only the origin is used. The value must be an http(s) URL with a plain DNS or IP host and no credentials, so it cannot inject a directive; otherwise the build fails. When it is unset, `connect-src` stays `'self'`. No other header changes.
+`apps/web/next.config.ts` adds the origin of `NEXT_PUBLIC_API_URL` to `connect-src`. The value is read at **build** time: Next bakes the headers into the build, so changing it needs a rebuild. Only the origin is used. The value must be an http(s) URL with a plain DNS or IP host and no credentials, so it cannot inject a directive; a production build also refuses plain `http:` unless the host is loopback. Otherwise the build fails. When it is unset, `connect-src` stays `'self'`. No other header changes.
 
 ## Adding or removing a token
 
@@ -86,7 +90,7 @@ See [docs/runbooks/token-list.md](../runbooks/token-list.md). Every change is a 
 ## Consequences and residual risks
 
 - **A listed token can turn bad later.** Its issuer can pause, blacklist or upgrade it, it can be exploited, or (USDT) its dormant transfer-fee switch can be turned on. The list does not watch for this. The wrapper still refuses a fee-on-transfer swap on-chain, and the delisting runbook covers removal. However, between the event and a deploy, the picker still shows the token.
-- **Bridged tokens** (L2 DAI, UNI, LINK, WBTC on Arbitrum; DAI and UNI on Base) depend on their canonical bridges, and the Arbitrum ones are upgradeable by the bridge's governance.
+- **Bridged tokens** (DAI, UNI, LINK, WBTC and WETH on Arbitrum; DAI and UNI on Base) depend on their canonical bridges, and the Arbitrum ones are upgradeable by the bridge's governance.
 - **List updates are manual.** A new chain or token needs a PR, and stale entries remain until someone removes them. This costs coverage, not safety.
 - **No logos yet.** `logoUri` is optional and unset. When logos are added they must be served from our own origin or an allowlisted image host, and `img-src` in the CSP must be widened deliberately.
 - **No token risk scanner.** A v1 token risk scanner is a later feature: it would cover honeypots, owner privileges and liquidity, and would warn on unlisted tokens.

@@ -8,10 +8,15 @@ const PREFLIGHT_METHODS: ReadonlySet<string> = new Set(['GET', 'POST']);
 export const CORS_MAX_AGE_SECONDS = 600;
 
 function appendVary(reply: FastifyReply, field: string): void {
+  // A header set by another hook may be a string, a list of strings or absent.
   const current = reply.getHeader('vary');
-  const existing = typeof current === 'string' ? current : '';
+  const existing = Array.isArray(current)
+    ? current.map(String)
+    : typeof current === 'string'
+      ? [current]
+      : [];
   const fields = existing
-    .split(',')
+    .flatMap((v) => v.split(','))
     .map((f) => f.trim())
     .filter((f) => f !== '');
   if (fields.some((f) => f === '*' || f.toLowerCase() === field.toLowerCase())) return;
