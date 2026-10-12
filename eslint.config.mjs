@@ -15,7 +15,7 @@ export default tseslint.config(
   },
   {
     // In tests a wrong assumption fails loudly, so non-null assertions are allowed.
-    files: ['**/*.test.ts'],
+    files: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts'],
     rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
   },
 );

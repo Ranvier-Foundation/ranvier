@@ -1,14 +1,33 @@
-/** Hop logo: lowercase wordmark followed by two stepping square nodes. */
-export function Logo() {
+import { logoGeometry } from './logo-geometry';
+
+export type LogoTone = 'light' | 'deep';
+
+/** Wordmark and Hop mark. Built once; takes the wordmark size in whole pixels. */
+export function Logo({ size, tone = 'light' }: { size: number; tone?: LogoTone }) {
+  const g = logoGeometry(size);
+  const word = tone === 'deep' ? 'text-on-primary' : 'text-ink';
+  const node = tone === 'deep' ? 'text-blush' : 'text-accent';
   return (
-    <span className="inline-flex items-start text-[32px] leading-none font-bold tracking-[-0.055em]">
+    <span
+      data-logo={size}
+      className={`inline-flex items-start leading-none font-bold tracking-logo ${word}`}
+      style={{ fontSize: g.fontSize }}
+    >
       ranvier
       <span
         aria-hidden="true"
-        className="relative mb-2 ml-[3px] size-3.5 shrink-0 self-end text-brand"
+        data-logo-mark=""
+        className={`relative shrink-0 self-end ${node}`}
+        style={{ width: g.box, height: g.box, marginBottom: g.lift, marginLeft: g.spaceBefore }}
       >
-        <span className="absolute top-2 left-0 size-1.5 bg-current" />
-        <span className="absolute top-0 left-2 size-1.5 bg-current" />
+        <span
+          className="absolute bg-current"
+          style={{ left: 0, top: g.step, width: g.square, height: g.square }}
+        />
+        <span
+          className="absolute bg-current"
+          style={{ left: g.step, top: 0, width: g.square, height: g.square }}
+        />
       </span>
     </span>
   );

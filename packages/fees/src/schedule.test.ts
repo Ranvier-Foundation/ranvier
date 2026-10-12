@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Token } from '@ranvier/types';
 import {
+  FEE_SCHEDULE,
   feeAmount,
   feeRate,
   isWrapOrUnwrap,
@@ -190,5 +191,48 @@ describe('quoteFee', () => {
         expect(promo.amount * 10_000n).toBeLessThanOrEqual(usdc(dollars) * BigInt(MAX_FEE_BPS));
       }
     });
+  });
+});
+
+describe('FEE_SCHEDULE', () => {
+  const cases: [string, FeeInput, number][] = [
+    ['wrap', { ...base, sellToken: ETH, buyToken: WETH }, FEE_SCHEDULE.wrapUnwrapBps],
+    ['stablecoin pair', { ...base, sellToken: USDC, buyToken: USDT }, FEE_SCHEDULE.stablecoinBps],
+    ['tier 1', { ...base, usdValue: FEE_SCHEDULE.tier1.upperUsd - 1n }, FEE_SCHEDULE.tier1.bps],
+    [
+      'tier 2 lower bound',
+      { ...base, usdValue: FEE_SCHEDULE.tier1.upperUsd },
+      FEE_SCHEDULE.tier2.bps,
+    ],
+    [
+      'tier 2 upper bound',
+      { ...base, usdValue: FEE_SCHEDULE.tier2.upperUsd },
+      FEE_SCHEDULE.tier2.bps,
+    ],
+    ['tier 3', { ...base, usdValue: FEE_SCHEDULE.tier2.upperUsd + 1n }, FEE_SCHEDULE.tier3.bps],
+  ];
+  it.each(cases)('feeRate follows the schedule constant: %s', (_name, input, bps) => {
+    expect(feeRate(input).bps).toBe(bps);
+  });
+
+  it('holds the documented values and stays within the contract cap', () => {
+    expect(FEE_SCHEDULE).toEqual({
+      wrapUnwrapBps: 0,
+      stablecoinBps: 5,
+      tier1: { upperUsd: 1_000_000n, bps: 20 },
+      tier2: { upperUsd: 10_000_000n, bps: 15 },
+      tier3: { bps: 10 },
+      firstSwapFreeUsd: 100_000n,
+      maxBps: 30,
+    });
+    for (const bps of [
+      FEE_SCHEDULE.wrapUnwrapBps,
+      FEE_SCHEDULE.stablecoinBps,
+      FEE_SCHEDULE.tier1.bps,
+      FEE_SCHEDULE.tier2.bps,
+      FEE_SCHEDULE.tier3.bps,
+    ]) {
+      expect(bps).toBeLessThanOrEqual(FEE_SCHEDULE.maxBps);
+    }
   });
 });
