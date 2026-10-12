@@ -16,6 +16,7 @@
     "@ranvier/fees": "workspace:*",
     "@ranvier/types": "workspace:*",
     "fastify": "5.12.5",
+    "viem": "2.57.4",
     "zod": "4.6.6"
   },
   "devDependencies": {

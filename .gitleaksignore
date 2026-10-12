@@ -1,0 +1,5 @@
+# Reviewed false positives (gitleaks fingerprints). Add an entry only after confirming
+# the finding is not a secret, with a reason.
+
+# Empty QUOTE_SIGNER_PRIVATE_KEY= placeholder; gitleaks read the next line as its value.
+68f5e55a739bee7d0fc67cfad6efb58381e795f6:apps/api/.env.example:generic-api-key:11

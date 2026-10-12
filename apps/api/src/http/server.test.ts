@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderQuote } from '@ranvier/types';
+import { padHex } from 'viem';
+import { LocalKeySigner } from '../adapters/signers/local-key.js';
 import { buildServer, type ServerDeps } from './server.js';
 
 const ETH = { chain: 'evm:1', address: 'native', symbol: 'ETH', decimals: 18 };
@@ -9,11 +11,12 @@ const USDC = {
   symbol: 'USDC',
   decimals: 6,
 };
+const TAKER = '0x00000000000000000000000000000000000000aa';
 const quoteBody = {
   sellToken: ETH,
   buyToken: USDC,
   sellAmount: '1000000000000000000',
-  taker: '0xabc',
+  taker: TAKER,
   slippageBps: 50,
 };
 
@@ -29,7 +32,7 @@ const deps = (overrides: Partial<ServerDeps> = {}): ServerDeps => ({
         buyAmountUsd: 2_000_00n,
         gasCostUsd: 50n,
         route: [],
-        tx: { to: '0x1', data: '0x', value: req.sellAmount },
+        tx: { to: '0x0000000000001ff3684f28c67538d4d072c22734', data: '0x', value: req.sellAmount },
       }),
     },
   ],
@@ -133,6 +136,62 @@ describe('http', () => {
     ).inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody });
     expect(res.statusCode).toBe(503);
     expect(res.json()).toEqual({ error: 'price_unavailable' });
+  });
+
+  it('rejects EVM quotes for a non-EVM taker address', async () => {
+    const res = await buildServer(deps()).inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: { ...quoteBody, taker: 'not-an-address' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('includes a signed fee-wrapper transaction when signing is configured', async () => {
+    const signer = new LocalKeySigner(padHex('0xa11ce', { size: 32 }), 'test');
+    const res = await buildServer(
+      deps({
+        signing: {
+          feeWrapper: '0x000000000000000000000000000000000000fee1',
+          signer,
+          ttlSeconds: 60,
+          now: () => 1_800_000_000_000,
+          nonce: () => 9n,
+        },
+      }),
+    ).inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody });
+    expect(res.statusCode).toBe(200);
+    const { swap } = res.json();
+    expect(swap.quote).toMatchObject({
+      user: '0x00000000000000000000000000000000000000AA',
+      tokenIn: '0x0000000000000000000000000000000000000000',
+      amountIn: '1000000000000000000',
+      feeAmount: '2000000000000000',
+      nonce: '9',
+      deadline: '1800000060',
+    });
+    expect(swap.transaction).toMatchObject({
+      to: '0x000000000000000000000000000000000000fee1',
+      value: '1000000000000000000',
+    });
+    expect(swap.signature).toMatch(/^0x[0-9a-f]{130}$/);
+  });
+
+  it('uses a random nonce and the current time by default', async () => {
+    const signer = new LocalKeySigner(padHex('0xa11ce', { size: 32 }), 'test');
+    const app = buildServer(
+      deps({
+        signing: {
+          feeWrapper: '0x000000000000000000000000000000000000fee1',
+          signer,
+          ttlSeconds: 60,
+        },
+      }),
+    );
+    const a = (await app.inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody })).json();
+    const b = (await app.inject({ method: 'POST', url: '/v1/quotes', payload: quoteBody })).json();
+    expect(a.swap.quote.nonce).not.toBe(b.swap.quote.nonce);
+    expect(Number(a.swap.quote.deadline)).toBeGreaterThan(Date.now() / 1000);
   });
 
   it('returns 502 when no provider can route', async () => {
