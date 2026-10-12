@@ -72,12 +72,34 @@ At startup with `KMS_KEY_ID`, every chain in `ZEROX_CHAIN_IDS` must pass this ga
   - The wrapper only executes a quote for its own user (`msg.sender == q.user`) and pulls the input from the caller. A quote signed by an attacker therefore cannot move funds of users who do not submit it themselves.
   - For a user who does submit a quote, the wrapper calls only allowlisted routers, approves exact amounts and checks the user's balance increase against the signed minimum, which the user sees before signing the transaction.
   - The realistic loss is fee revenue: zero-fee quotes, until the role is revoked. A host-level attacker could also corrupt quotes for real users. `vetRoute` would no longer protect them, but the wrapper's on-chain checks still would.
-- **Stolen role credentials, or a new principal acting as the role.** The key policy's principal check alone cannot tell the API from someone using its credentials, for example credentials taken from instance metadata, a copied Roles Anywhere certificate, a new instance launched with the role through `iam:PassRole`, or an edited trust policy. The runbook therefore:
-  - adds a network-origin deny on `kms:Sign`: the KMS VPC endpoint (`aws:SourceVpce`) for an AWS-hosted API, or the API's egress IP (`aws:SourceIp`) for a self-hosted one. Requests without the key are denied;
-  - alarms on Sign from another endpoint or IP, on changes to the API role, on policy versions, and on unexpected `AssumeRole`;
-  - restricts `iam:PassRole` on the API role to the deployer.
-    An attacker running code on the API host itself is inside all of these, so host compromise is still the case described above.
-- **Key and IAM administrators.** Only a hardware-MFA break-glass role may change the key policy, create grants or replicate the key. The admin role can manage the key but cannot sign or change the policy. Deletion needs the full 30-day wait. The key policy keeps AWS's root "enable IAM" statement so that the key stays recoverable. The trade-off: a determined IAM administrator can still take over, in several logged steps (edit the break-glass trust policy, assume it, rewrite the key policy), and alarms report each step. Production should therefore use a dedicated member account with an SCP that denies those IAM, KMS and CloudTrail changes to everyone but the break-glass role, plus an organization trail into a separate log-archive account. Alarms alone can be switched off by an administrator; an SCP and an organization trail cannot be changed from inside the account.
+- **Stolen role credentials, or a new principal acting as the role.** The key policy's principal check cannot tell the API from someone else using the API role. That someone could be using credentials taken from instance metadata, a copied Roles Anywhere certificate, a new instance launched with the role through `iam:PassRole`, or an edited trust policy. The runbook therefore:
+  - adds a network-origin deny on `kms:Sign`: the KMS VPC endpoint (`aws:SourceVpce`) for an AWS-hosted API, or the API's egress IP (`aws:SourceIp`) for a self-hosted one. A request without the key is denied. The IP pin is only as strong as the IP's exclusivity: a shared NAT or home IP weakens it;
+  - adds alarms on Sign from another principal, endpoint or IP; on changes to the protected roles, the break-glass users, policy versions and Roles Anywhere; and on unexpected `AssumeRole`;
+  - in production, adds the SCPs below.
+
+  An attacker who runs code on the API host is inside the network pin and holds the role's session. The SCPs remove the usual remote ways in (see below). A host compromised in any other way is the case described above.
+
+- **IAM administrators in the signer account.** The key policy keeps AWS's root "enable IAM" statement so that the key stays recoverable. As a result, IAM administrators are part of the trust base.
+  - **Without the SCPs**, an IAM administrator in the signer account can take control in a few steps. The alarms report each step after the fact; nothing blocks it. The administrator can:
+    - reset a break-glass user's password and MFA device, or edit the break-glass role's trust policy, then assume break-glass and rewrite the key policy;
+    - pass the API role to a new instance or task, or edit the deployer role so it does, and sign from inside the VPC;
+    - open a shell on an API host (SSM Session Manager, Run Command, ECS Exec, EC2 Instance Connect, user data);
+    - for a self-hosted API, add a trust anchor or change the profile, CRL or attribute mapping in Roles Anywhere;
+    - silence the alarms (overwrite a metric filter, re-put an alarm without actions, unsubscribe or filter the alert topic, stop the trail).
+  - **With the two SCPs in the runbook (step 5c)**, every principal in the account except the break-glass role is denied:
+    - changes to the API, break-glass, deployer and CI roles;
+    - credential, MFA and policy changes on the break-glass users;
+    - `iam:PassRole` on the API role, except for the deployer, CI and break-glass roles;
+    - `PutKeyPolicy`, `CreateGrant` and `ReplicateKey` on the signer key;
+    - the listed SSM, ECS Exec, EC2 Instance Connect and `ModifyInstanceAttribute` actions, on all resources in the account;
+    - Roles Anywhere trust anchor, profile, attribute-mapping and CRL changes;
+    - stopping, changing or deleting the signer trail, the `ranvier-cloudtrail` metric filters and retention, the `ranvier-*` alarms and the alert topic and its subscriptions.
+  - **What the SCPs do not stop:**
+    - anyone holding a break-glass user's password and hardware key;
+    - the organization's management account and AWS Support, which SCPs never restrict;
+    - other ways to run code as the API role that the SCPs do not list, notably pushing a new image to a mutable tag or editing a launch template. Deploy immutable image digests, and leave those actions to CI.
+  - **The organization trail** in a separate log-archive account cannot be stopped or changed from a member account. It is the tamper-resistant record. The alarms run on the signer account's own trail, because an organization trail delivers to CloudWatch Logs only in the account that manages it.
+- **Key administrators.** Only the break-glass role may change the key policy, create grants or replicate the key. The admin role can manage the key, but it cannot sign or change the policy. Deletion needs the full 30-day wait.
 - **Response.** Detach or deny `kms:Sign` for the API role, or disable the key. Signing stops at once, and quotes fail with `503 signing_unavailable`. If the key policy itself may have been changed, rotate the key (below) and pause the wrapper through the guardian if needed.
 - **Detection.** CloudTrail records every `Sign`, `GetPublicKey`, `DescribeKey` and key-policy change. Alert on `Sign` calls from any principal other than the API role, on `Sign` volume far above the quote rate, and on any `PutKeyPolicy`, `CreateGrant`, `DisableKey`, `ScheduleKeyDeletion` or alias change (runbook).
 - **Wrong or swapped key.** In production and on mainnets the API takes a key ARN, not an alias, and refuses to start unless the key derives to `KMS_EXPECTED_SIGNER_ADDRESS`. The planned follow-up check against `FeeWrapper.feeSigner()` (below) will also compare the configured address with the chain.
@@ -110,5 +132,5 @@ In an emergency (key policy compromised), skip the wait at step 3 only as far as
 - Mainnet quotes can now be signed. The local-key path is unchanged and still cannot sign a mainnet.
 - Startup depends on KMS and IAM. A missing permission, a disabled key or a wrong region stops the API with a clear message instead of running without signatures.
 - Each signed quote adds one KMS round trip (typically tens of milliseconds in-region) to its latency, and costs a small per-request fee.
-- New dependency: `@aws-sdk/client-kms` (exact pin), used only by the KMS adapter and the smoke script. Its own `@aws-sdk/*` and `@smithy/*` dependencies, which include the credential chain, request signing and HTTP, are pinned in `pnpm-workspace.yaml` `overrides` to releases at least 7 days old that satisfy every dependency range. Re-check that set whenever the client is bumped.
+- New dependency: `@aws-sdk/client-kms` (exact pin), used only by the KMS adapter and the smoke script. Its own `@aws-sdk/*` and `@smithy/*` dependencies, which include the credential chain, request signing and HTTP, are pinned in `pnpm-workspace.yaml` `overrides` to releases at least 7 days old that satisfy every dependency range. CI runs `pnpm --filter @ranvier/api check:aws-overrides`. It fails if the lockfile drifts from the overrides, if a new `@aws-sdk/*` or `@smithy/*` package is not pinned, or if a pinned version breaks any declared dependency range. Re-check the set whenever the client is bumped.
 - The API role needs `kms:DescribeKey` as well as `kms:Sign` and `kms:GetPublicKey`. `DescribeKey` is read-only metadata, and it is the only call that reports `KeyState` and `Origin`.

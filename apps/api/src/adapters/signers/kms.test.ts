@@ -359,7 +359,9 @@ describe('KmsSigner.signTypedData', () => {
     for (const [name, onSign] of cases) {
       it(`on ${name}`, async () => {
         const signer = await create(fake(onSign ? { onSign } : {}));
-        await expect(signer.signTypedData(quoteOn(1))).rejects.toEqual(unavailable('integrity'));
+        await expect(signer.signTypedData(quoteOn(31337))).rejects.toEqual(
+          unavailable('integrity'),
+        );
       });
     }
   });

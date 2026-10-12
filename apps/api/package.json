@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "lint": "eslint src scripts",
     "test": "vitest run --coverage",
-    "kms:smoke": "tsx scripts/kms-smoke.ts"
+    "kms:smoke": "tsx scripts/kms-smoke.ts",
+    "check:aws-overrides": "tsx scripts/check-aws-overrides.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "3.1141.0",
