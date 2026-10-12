@@ -9,7 +9,7 @@ import { signedMinimum, slippageFloor } from '../domain/route-safety.js';
 import { typedData } from '../domain/swap-quote.js';
 import type { PriceOracle, TokenPrice } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
-import { SigningUnavailableError } from '../ports/quote-signer.js';
+import { SigningUnavailableError, type QuoteSigner } from '../ports/quote-signer.js';
 import { FAKE_ALIAS, FakeKms } from '../testing/fake-kms.js';
 import { ALLOWANCE_HOLDER, ATTACKER, SETTLER, zeroXRoute } from '../testing/zero-x-route.js';
 import { buildServer, type ServerDeps } from './server.js';
@@ -325,36 +325,63 @@ describe('http', () => {
       expect(recovered).toBe(signing.signer.address);
     });
 
-    it('refuses a mainnet the KMS signer is not configured for, or without a router policy', async () => {
-      const notConfigured = await post(deps({ signing: await kmsSigning([8453]) }), quoteBody);
-      expect(notConfigured.statusCode).toBe(503);
-      expect(notConfigured.json()).toEqual({ error: 'signing_unavailable' });
-      // Policy without chain 1: no route can be vetted, so nothing reaches the signer.
-      const noPolicy = await post(
-        deps({ signing: await kmsSigning(), routePolicy: buildRoutePolicy({}) }),
-        quoteBody,
-      );
-      expect(noPolicy.statusCode).toBe(502);
-    });
-
-    it('refuses a mainnet for a non-KMS signer that claims it can sign it', async () => {
+    /** Wraps a signer so the test can see whether the HTTP layer reached the signing gate. */
+    function watched(signer: QuoteSigner) {
+      const canSignCalls: number[] = [];
       let signed = 0;
-      const rogue = {
-        ...SIGNING,
+      return {
+        canSignCalls,
+        signedCount: () => signed,
         signer: {
-          kind: 'local-key' as const,
-          address: SIGNING.signer.address,
-          canSign: () => true,
-          signTypedData: async (): Promise<Hex> => {
+          kind: signer.kind,
+          address: signer.address,
+          canSign: (id: number) => {
+            canSignCalls.push(id);
+            return signer.canSign(id);
+          },
+          signTypedData: (data: Parameters<QuoteSigner['signTypedData']>[0]) => {
             signed++;
-            return '0x';
+            return signer.signTypedData(data);
           },
         },
       };
-      const res = await post(deps({ signing: rogue }), quoteBody);
+    }
+
+    it('reaches the signing gate and refuses a mainnet the KMS signer is not configured for', async () => {
+      const w = watched((await kmsSigning([8453])).signer);
+      const res = await post(deps({ signing: { ...SIGNING, signer: w.signer } }), quoteBody);
       expect(res.statusCode).toBe(503);
       expect(res.json()).toEqual({ error: 'signing_unavailable' });
-      expect(signed).toBe(0);
+      expect(w.canSignCalls).toEqual([1]);
+      expect(w.signedCount()).toBe(0);
+    });
+
+    it('stops a chain without a router policy at vetting, before the signing gate', async () => {
+      // canSignChain also requires a router policy, but vetRoute uses the same policy, so over
+      // HTTP a chain without one never gets that far; the gate's own policy check is covered in
+      // signing-policy.test.ts.
+      const w = watched((await kmsSigning()).signer);
+      const res = await post(
+        deps({ signing: { ...SIGNING, signer: w.signer }, routePolicy: buildRoutePolicy({}) }),
+        quoteBody,
+      );
+      expect(res.statusCode).toBe(502);
+      expect(w.canSignCalls).toEqual([]);
+      expect(w.signedCount()).toBe(0);
+    });
+
+    it('refuses a mainnet for a non-KMS signer that claims it can sign it', async () => {
+      const w = watched({
+        kind: 'local-key',
+        address: SIGNING.signer.address,
+        canSign: () => true,
+        signTypedData: async (): Promise<Hex> => '0x',
+      });
+      const res = await post(deps({ signing: { ...SIGNING, signer: w.signer } }), quoteBody);
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toEqual({ error: 'signing_unavailable' });
+      expect(w.canSignCalls).toEqual([1]); // the gate ran and overruled canSign
+      expect(w.signedCount()).toBe(0);
     });
 
     for (const reason of ['busy', 'timeout', 'upstream', 'integrity'] as const) {

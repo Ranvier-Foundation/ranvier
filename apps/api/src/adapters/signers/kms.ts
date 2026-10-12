@@ -124,6 +124,7 @@ const describeKeyOutput = z.object({
     KeyManager: z.string().optional(),
     Origin: z.string().optional(),
     SigningAlgorithms: z.array(z.string()).optional(),
+    MultiRegion: z.boolean().optional(),
   }),
 });
 
@@ -309,6 +310,11 @@ export class KmsSigner implements QuoteSigner {
     if (meta.KeySpec !== KMS_KEY_SPEC) throw refused(`KeySpec is ${String(meta.KeySpec)}`);
     if (meta.KeyUsage !== KMS_KEY_USAGE) throw refused(`KeyUsage is ${String(meta.KeyUsage)}`);
     if (meta.KeyManager !== 'CUSTOMER') throw refused(`KeyManager is ${String(meta.KeyManager)}`);
+    // A multi-Region key shares its key material with replicas in other Regions, each with its
+    // own key policy. Only single-Region keys are accepted; a missing field is refused too.
+    if (meta.MultiRegion !== false) {
+      throw refused(`MultiRegion is ${String(meta.MultiRegion)}; use a single-Region key`);
+    }
     const origin = meta.Origin;
     if (origin === undefined || !KMS_ALLOWED_ORIGINS.includes(origin)) {
       throw refused(`Origin is ${String(origin)}; key material must be generated in AWS`);

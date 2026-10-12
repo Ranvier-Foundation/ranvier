@@ -94,6 +94,7 @@ export class FakeKms implements KmsTransport {
           KeyManager: 'CUSTOMER',
           Origin: 'AWS_KMS',
           SigningAlgorithms: ['ECDSA_SHA_256'],
+          MultiRegion: false,
           ...this.opts.metadata,
         },
       };

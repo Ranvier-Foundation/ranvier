@@ -2,11 +2,23 @@ import { z } from 'zod';
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 
-/** Key ID, key ARN, alias name or alias ARN, as KMS accepts them in `KeyId`. */
+const KEY_UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/** A full KMS key ARN for a single-Region key (multi-Region key IDs start with `mrk-`). */
+export const KMS_KEY_ARN = new RegExp(`^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key/${KEY_UUID}$`);
+
+/**
+ * Key ARN, alias name, alias ARN or key ID, as KMS accepts them in `KeyId`. Multi-Region key
+ * IDs (`mrk-...`) are refused; the signer also refuses any key whose MultiRegion is not false.
+ */
 const kmsKeyId = z
   .string()
-  .regex(
-    /^(arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:(key\/[A-Za-z0-9-]+|alias\/[A-Za-z0-9/_-]+)|alias\/[A-Za-z0-9/_-]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|mrk-[0-9a-f]{32})$/,
+  .refine(
+    (v) =>
+      KMS_KEY_ARN.test(v) ||
+      new RegExp(`^${KEY_UUID}$`).test(v) ||
+      /^(arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:)?alias\/[A-Za-z0-9/_-]+$/.test(v),
+    { message: 'expected a key ARN, key ID, alias/... name or alias ARN' },
   );
 
 const chainIdList = z
@@ -36,6 +48,12 @@ const envSchema = z
      * never from this config (ADR 0005).
      */
     KMS_KEY_ID: kmsKeyId.optional(),
+    /**
+     * The Ethereum address the KMS key must derive to (the wrapper's `feeSigner`). Required, with
+     * a full key ARN in KMS_KEY_ID, under NODE_ENV=production or when any quoted chain is not a
+     * known testnet; startup refuses on a mismatch (ADR 0005).
+     */
+    KMS_EXPECTED_SIGNER_ADDRESS: address.optional(),
     /** Region of KMS_KEY_ID. Required when KMS_KEY_ID is set. */
     AWS_REGION: z
       .string()

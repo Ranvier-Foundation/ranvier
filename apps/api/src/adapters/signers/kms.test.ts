@@ -84,6 +84,23 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** What the real fake KMS answers for this Sign input: a valid DER signature by KEY. */
+async function validSignResponse(input: SignCommand['input']) {
+  const raw = await rawSign(KEY, bytesToHex(input.Message ?? new Uint8Array()), true);
+  return {
+    KeyId: FAKE_KEY_ARN,
+    Signature: derSignature(raw.r, raw.s),
+    SigningAlgorithm: 'ECDSA_SHA_256',
+  };
+}
+
+describe('validSignResponse (control for the fail-closed cases)', () => {
+  it('is accepted when nothing is changed', async () => {
+    const signer = await create(fake({ onSign: validSignResponse }));
+    await expect(signer.signTypedData(quoteOn(31337))).resolves.toBe(GOLDEN.signature);
+  });
+});
+
 describe('KmsSigner.create', () => {
   it('resolves the key, checks it and derives the address from the public key', async () => {
     const kms = fake();
@@ -126,6 +143,12 @@ describe('KmsSigner.create', () => {
       'KeyUsage is ENCRYPT_DECRYPT',
     ],
     ['an AWS managed key', { metadata: { KeyManager: 'AWS' } }, 'KeyManager is AWS'],
+    ['a multi-Region key', { metadata: { MultiRegion: true } }, 'MultiRegion is true'],
+    [
+      'a key that does not report MultiRegion',
+      { metadata: { MultiRegion: undefined } },
+      'MultiRegion is undefined',
+    ],
     ['imported key material', { metadata: { Origin: 'EXTERNAL' } }, 'Origin is EXTERNAL'],
     [
       'an external key store',
@@ -315,19 +338,19 @@ describe('KmsSigner.signTypedData', () => {
           SigningAlgorithm: 'ECDSA_SHA_256',
         }),
       ],
+      // A valid signature by the right key over the right digest, with only one response field
+      // changed: these pass only because of the KeyId and algorithm checks in kms.ts.
       [
         'a response for another key',
-        async () => ({
-          KeyId: `${FAKE_KEY_ARN}0`,
-          Signature: derSignature(1n, 1n),
-          SigningAlgorithm: 'ECDSA_SHA_256',
+        async (input) => ({
+          ...(await validSignResponse(input)),
+          KeyId: 'arn:aws:kms:eu-west-1:111122223333:key/00000000-0000-0000-0000-000000000000',
         }),
       ],
       [
         'another algorithm',
-        async () => ({
-          KeyId: FAKE_KEY_ARN,
-          Signature: derSignature(1n, 1n),
+        async (input) => ({
+          ...(await validSignResponse(input)),
           SigningAlgorithm: 'ECDSA_SHA_384',
         }),
       ],

@@ -16,6 +16,7 @@ function deps(kms = new FakeKms({ privateKey: KEY })) {
     regions,
     kms,
     deps: {
+      nodeEnv: 'test' as string | undefined,
       policy: TRUSTED_ROUTERS,
       kmsTransport: (region: string) => {
         regions.push(region);
@@ -25,8 +26,12 @@ function deps(kms = new FakeKms({ privateKey: KEY })) {
   };
 }
 
+// The address of KEY (the golden signer in swap-quote.test.ts).
+const EXPECTED = '0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7';
+
 const kmsEnv = {
-  KMS_KEY_ID: FAKE_ALIAS,
+  KMS_KEY_ID: FAKE_KEY_ARN,
+  KMS_EXPECTED_SIGNER_ADDRESS: EXPECTED,
   AWS_REGION: 'eu-west-1',
   FEE_WRAPPER_ADDRESS: WRAPPER,
 };
@@ -53,7 +58,7 @@ describe('setUpSigning', () => {
       },
     });
     await expect(setUpSigning(loadConfig(kmsEnv), deps(kms).deps)).rejects.toThrow(
-      'KMS signer startup failed: KMS DescribeKey failed for alias/ranvier-fee-signer-test: AccessDeniedException',
+      `KMS signer startup failed: KMS DescribeKey failed for ${FAKE_KEY_ARN}: AccessDeniedException`,
     );
     const disabled = new FakeKms({ privateKey: KEY, metadata: { KeyState: 'Disabled' } });
     await expect(setUpSigning(loadConfig(kmsEnv), deps(disabled).deps)).rejects.toThrow(
@@ -126,5 +131,99 @@ describe('setUpSigning', () => {
     expect(
       await setUpSigning(loadConfig({ QUOTE_SIGNER_PRIVATE_KEY: KEY }), deps().deps),
     ).toBeUndefined();
+  });
+
+  describe('pinning the KMS key (production and mainnets)', () => {
+    const TESTNET = { ZEROX_CHAIN_IDS: '84532' };
+    const unpinned = { ...kmsEnv, KMS_EXPECTED_SIGNER_ADDRESS: undefined };
+
+    it('requires KMS_EXPECTED_SIGNER_ADDRESS for any mainnet chain', async () => {
+      await expect(setUpSigning(loadConfig(unpinned), deps().deps)).rejects.toThrow(
+        'KMS_EXPECTED_SIGNER_ADDRESS is required in production and for mainnet chains',
+      );
+    });
+
+    it('treats an unknown chain as a mainnet', async () => {
+      const config = loadConfig({ ...unpinned, ZEROX_CHAIN_IDS: '84532,999999' });
+      await expect(setUpSigning(config, deps().deps)).rejects.toThrow(
+        'KMS_EXPECTED_SIGNER_ADDRESS is required',
+      );
+    });
+
+    it('requires it under NODE_ENV=production even for testnets', async () => {
+      for (const nodeEnv of ['production', ' Production\n']) {
+        const d = deps();
+        await expect(
+          setUpSigning(loadConfig({ ...unpinned, ...TESTNET }), { ...d.deps, nodeEnv }),
+        ).rejects.toThrow('KMS_EXPECTED_SIGNER_ADDRESS is required');
+      }
+    });
+
+    it('reads NODE_ENV from the environment when not given', async () => {
+      const { policy, kmsTransport } = deps().deps;
+      const noNodeEnv = { policy, kmsTransport };
+      const before = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(
+          setUpSigning(loadConfig({ ...unpinned, ...TESTNET }), noNodeEnv),
+        ).rejects.toThrow('KMS_EXPECTED_SIGNER_ADDRESS is required');
+      } finally {
+        process.env.NODE_ENV = before;
+      }
+    });
+
+    it('requires a full key ARN, not an alias or key ID', async () => {
+      for (const keyId of [FAKE_ALIAS, '1234abcd-12ab-34cd-56ef-1234567890ab']) {
+        await expect(
+          setUpSigning(loadConfig({ ...kmsEnv, KMS_KEY_ID: keyId }), deps().deps),
+        ).rejects.toThrow('KMS_KEY_ID must be a full key ARN');
+      }
+    });
+
+    it('refuses to start when the key derives to another address', async () => {
+      const other = '0x000000000000000000000000000000000000dEaD';
+      await expect(
+        setUpSigning(loadConfig({ ...kmsEnv, KMS_EXPECTED_SIGNER_ADDRESS: other }), deps().deps),
+      ).rejects.toThrow(`derives to ${EXPECTED}, but KMS_EXPECTED_SIGNER_ADDRESS is ${other}`);
+    });
+
+    it('compares addresses case-insensitively', async () => {
+      for (const expected of [EXPECTED.toLowerCase(), `0x${EXPECTED.slice(2).toUpperCase()}`]) {
+        const setup = await setUpSigning(
+          loadConfig({ ...kmsEnv, KMS_EXPECTED_SIGNER_ADDRESS: expected }),
+          deps().deps,
+        );
+        expect(setup?.signer.address).toBe(EXPECTED);
+      }
+    });
+
+    it('allows an alias without a pin for testnets outside production', async () => {
+      const setup = await setUpSigning(
+        loadConfig({
+          KMS_KEY_ID: FAKE_ALIAS,
+          AWS_REGION: 'eu-west-1',
+          FEE_WRAPPER_ADDRESS: WRAPPER,
+          ...TESTNET,
+        }),
+        { ...deps().deps, policy: new Map([[84532, TRUSTED_ROUTERS.get(1) ?? []]]) },
+      );
+      expect(setup?.signer.canSign(84532)).toBe(true);
+    });
+
+    it('still checks a configured address on testnets', async () => {
+      await expect(
+        setUpSigning(
+          loadConfig({
+            KMS_KEY_ID: FAKE_ALIAS,
+            KMS_EXPECTED_SIGNER_ADDRESS: '0x000000000000000000000000000000000000dEaD',
+            AWS_REGION: 'eu-west-1',
+            FEE_WRAPPER_ADDRESS: WRAPPER,
+            ...TESTNET,
+          }),
+          { ...deps().deps, policy: new Map([[84532, TRUSTED_ROUTERS.get(1) ?? []]]) },
+        ),
+      ).rejects.toThrow('Refusing to start with an unexpected fee signer');
+    });
   });
 });

@@ -61,7 +61,6 @@ describe('loadConfig', () => {
         'alias/ranvier-fee-signer',
         'arn:aws:kms:eu-west-1:111122223333:alias/ranvier-fee-signer',
         '1234abcd-12ab-34cd-56ef-1234567890ab',
-        `mrk-${'a'.repeat(32)}`,
       ]) {
         expect(loadConfig({ KMS_KEY_ID: id, AWS_REGION: 'eu-west-1' }).KMS_KEY_ID, id).toBe(id);
       }
@@ -74,13 +73,29 @@ describe('loadConfig', () => {
     });
 
     it('rejects malformed key IDs and regions', () => {
-      for (const id of ['my-key', 'alias/', 'arn:aws:kms:eu-west-1:1:key/x', 'alias/a b']) {
+      for (const id of [
+        'my-key',
+        'alias/',
+        'arn:aws:kms:eu-west-1:1:key/x',
+        'alias/a b',
+        // Multi-Region keys are refused (ADR 0005).
+        `mrk-${'a'.repeat(32)}`,
+        `arn:aws:kms:eu-west-1:111122223333:key/mrk-${'a'.repeat(32)}`,
+      ]) {
         expect(() => loadConfig({ KMS_KEY_ID: id, AWS_REGION: 'eu-west-1' }), id).toThrow();
       }
       for (const region of ['EU-WEST-1', 'eu-west', 'europe']) {
         expect(() => loadConfig({ KMS_KEY_ID: ARN, AWS_REGION: region }), region).toThrow();
       }
       expect(loadConfig({ AWS_REGION: 'us-gov-west-1' }).AWS_REGION).toBe('us-gov-west-1');
+    });
+
+    it('parses the expected signer address', () => {
+      const expected = '0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7';
+      expect(
+        loadConfig({ KMS_EXPECTED_SIGNER_ADDRESS: expected }).KMS_EXPECTED_SIGNER_ADDRESS,
+      ).toBe(expected);
+      expect(() => loadConfig({ KMS_EXPECTED_SIGNER_ADDRESS: '0x1234' })).toThrow();
     });
 
     it('refuses both signers at once', () => {

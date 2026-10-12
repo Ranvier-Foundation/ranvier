@@ -50,5 +50,5 @@ Limitation: the API signs only routes whose AllowanceHolder target is a trusted 
 ## Mainnet differences
 
 - Owner is the admin multisig behind a timelock, guardian the guardian multisig, collector the fee-collector Safe. Do not set `INITIAL_ROUTERS`; the multisig allowlists routers.
-- The fee signer is an AWS KMS key, not a local key: set it up with [kms-setup.md](kms-setup.md) and use the address its smoke test prints as `FEE_SIGNER`. The API runs with `KMS_KEY_ID` and `AWS_REGION` and without `QUOTE_SIGNER_PRIVATE_KEY`; only a KMS signer may sign for mainnets, and only on chains with trusted routers (ADR 0005).
+- The fee signer is an AWS KMS key, not a local key: set it up with [kms-setup.md](kms-setup.md) and use the address its smoke test prints as `FEE_SIGNER`. The API runs with `KMS_KEY_ID` (the full key ARN), `KMS_EXPECTED_SIGNER_ADDRESS` (the same address as `FEE_SIGNER`) and `AWS_REGION`, and without `QUOTE_SIGNER_PRIVATE_KEY`; the signer address must never hold funds or be used for anything else; only a KMS signer may sign for mainnets, and only on chains with trusted routers (ADR 0005).
 - Two independent audits first (spec section 9).
