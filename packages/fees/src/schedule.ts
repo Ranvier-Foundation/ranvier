@@ -19,7 +19,11 @@ export interface FeeInput {
   isFirstSwap: boolean;
 }
 
-function isWrapOrUnwrap(a: Token, b: Token): boolean {
+/**
+ * True when one side is the chain's native coin and the other is that same chain's
+ * wrapped native token (e.g. ETH <-> WETH on one chain). Free by the fee schedule.
+ */
+export function isWrapOrUnwrap(a: Token, b: Token): boolean {
   if (a.chain !== b.chain) return false;
   const aNative = a.address === NATIVE;
   const bNative = b.address === NATIVE;

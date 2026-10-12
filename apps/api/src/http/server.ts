@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { quoteFee } from '@ranvier/fees';
 import { compareProviderQuotes } from '../domain/orchestrator.js';
 import { buildSignedSwap, evmChainId } from '../domain/swap-quote.js';
+import { buildDirectWrap } from '../domain/wrap.js';
 import type { PriceOracle, SwapHistory } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
 import type { QuoteSigner } from '../ports/quote-signer.js';
@@ -53,13 +54,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const parsed = quoteRequestSchema.safeParse(req.body);
     if (!parsed.success)
       return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+    const request = parsed.data;
+
+    // Native wrap/unwrap is free by the fee schedule and 1:1 on the wrapped native contract,
+    // so it bypasses providers, the price oracle, the fee wrapper and signing (ADR 0003).
+    const wrap = buildDirectWrap(request);
+    if (wrap) {
+      // USD value and first-swap status cannot change a 0 bps fee, so neither is fetched.
+      const fee = quoteFee({ ...request, usdValue: 0n, isFirstSwap: false });
+      if (fee.reason !== 'wrap-unwrap' || fee.amount !== 0n) {
+        req.log.error({ fee }, 'wrap detected but fee schedule did not return a free wrap');
+        return reply.code(500).send({ error: 'internal_error' });
+      }
+      return toJson({ fee, direct: wrap });
+    }
+
     if (deps.providers.length === 0 || !deps.prices || !deps.history) {
       return reply
         .code(503)
         .send({ error: 'routing_unavailable', message: 'No routing providers are configured' });
     }
 
-    const request = parsed.data;
     const timeoutMs = deps.providerTimeoutMs ?? 2500;
     let usdValue: bigint;
     let hasSwapped: boolean;
