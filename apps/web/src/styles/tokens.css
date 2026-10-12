@@ -1,0 +1,169 @@
+/*
+ * Design tokens: the single source of truth for every colour, size, radius and duration.
+ * Names match docs/ui-guidelines.md exactly. Nothing else under apps/web/src may contain a
+ * colour literal or a pixel literal (enforced by `pnpm guard:tokens`). The file is plain CSS
+ * custom properties inside Tailwind's @theme, so mobile can consume the same names and values.
+ */
+@theme {
+  /* Only tokens exist: clear Tailwind's default palette, spacing, radii, shadows and type. */
+  --color-*: initial;
+  --spacing: initial;
+  --spacing-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-*: initial;
+  --font-weight-*: initial;
+  --tracking-*: initial;
+  --leading-*: initial;
+  --breakpoint-*: initial;
+  --container-*: initial;
+  --ease-*: initial;
+  --blur-*: initial;
+  --animate-*: initial;
+
+  /* Colour */
+  --color-bg: #f7f4f2;
+  --color-surface: #ffffff;
+  --color-ink: #1c1011;
+  --color-sub: #6e5f61;
+  --color-line: #efe8e5;
+  --color-pill: #ede6e2;
+  --color-primary: #3b1519;
+  --color-accent: #9b2c35;
+  --color-blush: #f2b8a6;
+  --color-deep: #3b1519;
+  --color-deep-muted: #d2b3b5;
+  --color-deep-muted2: #a87a7e;
+  --color-deep-tile: #552329;
+  --color-scrim: rgba(28, 16, 17, 0.36);
+  --color-border-strong: #e3d7d2;
+  --color-switch-off: #d9cfca;
+  --color-row-hover: #fbf9f8;
+  /* Text on `primary`, `accent` and `deep` fills. */
+  --color-on-primary: #ffffff;
+  /* Hover fills (canvas: nav and ghost 0.05, rows and the rate line 0.04). */
+  --color-hover: rgba(0, 0, 0, 0.05);
+  --color-hover-row: rgba(0, 0, 0, 0.04);
+  /* Status colours: text on tint, always with a word or sign. */
+  --color-success-text: #2c5a35;
+  --color-success-tint: #e7f0e6;
+  --color-warning-text: #7a5200;
+  --color-warning-tint: #fbf0da;
+  --color-danger-text: #8e2730;
+  --color-danger-tint: #f8e6e4;
+  --color-neutral-text: #1c1011;
+  --color-neutral-tint: #ede6e2;
+  /* Network marks (canvas network colours). */
+  --color-chain-ethereum: #627eea;
+  --color-chain-base: #0052ff;
+  --color-chain-solana: #9945ff;
+  --color-chain-bnb: #f3ba2f;
+  --color-chain-arbitrum: #28a0f0;
+
+  /* Typography */
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --text-display: 48px;
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.05em;
+  --text-display--font-weight: 700;
+  --text-h1: 40px;
+  --text-h1--letter-spacing: -0.045em;
+  --text-h1--font-weight: 700;
+  --text-h2: 32px;
+  --text-h2--letter-spacing: -0.035em;
+  --text-h2--font-weight: 700;
+  --text-proof: 44px;
+  --text-proof--letter-spacing: -0.045em;
+  --text-proof--font-weight: 700;
+  /* Amount: swap amounts and token names. 36 px on web (canvas); the mobile app uses 30 px. */
+  --text-amount: 36px;
+  --text-amount--letter-spacing: -0.02em;
+  --text-amount--font-weight: 400;
+  --text-amount-mobile: 30px;
+  --text-amount-mobile--letter-spacing: -0.02em;
+  --text-amount-mobile--font-weight: 400;
+  --text-title-s: 22px;
+  --text-title-s--letter-spacing: -0.02em;
+  --text-title-s--font-weight: 600;
+  --text-lead: 16px;
+  --text-body: 15px;
+  --text-small: 14px;
+  --text-caption: 13px;
+  --text-badge: 11px;
+  --text-badge--font-weight: 700;
+
+  --tracking-logo: -0.055em;
+  --tracking-num: -0.02em;
+
+  /*
+   * Spacing scale (px value is the name: p-24 is 24 px). The 4 px base scale from the
+   * guidelines, then values the canvas uses that are off that scale, kept for fidelity.
+   */
+  --spacing-0: 0px;
+  --spacing-px: 1px;
+  --spacing-2: 2px;
+  --spacing-3: 3px;
+  --spacing-4: 4px;
+  --spacing-6: 6px;
+  --spacing-8: 8px;
+  --spacing-12: 12px;
+  --spacing-14: 14px;
+  --spacing-16: 16px;
+  --spacing-20: 20px;
+  --spacing-22: 22px;
+  --spacing-24: 24px;
+  --spacing-28: 28px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-56: 56px;
+  --spacing-64: 64px;
+  --spacing-72: 72px;
+  --spacing-88: 88px;
+  --spacing-120: 120px;
+  /* Canvas values off the 4 px scale (see Deviations). */
+  --spacing-5: 5px;
+  --spacing-7: 7px;
+  --spacing-10: 10px;
+  --spacing-18: 18px;
+  --spacing-26: 26px;
+  --spacing-30: 30px;
+  --spacing-160: 160px;
+  /* Control sizes. */
+  --spacing-control: 44px;
+  --spacing-avatar: 30px;
+  --spacing-cta: 264px;
+  --spacing-menu: 240px;
+  --spacing-field-min: 2ch;
+  --spacing-half: 50%;
+
+  --container-panel: 640px;
+
+  /* Radii: containers are square, everything pressable is a pill, avatars are round. */
+  --radius-none: 0px;
+  --radius-pill: 999px;
+  --radius-round: 50%;
+
+  /* Motion */
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: ease;
+  --ease-ui: ease;
+
+  /* Breakpoints: below `nav` the text nav collapses into the more menu. */
+  --breakpoint-narrow: 640px;
+  --breakpoint-nav: 1200px;
+}
+
+/* Values for plain CSS (focus rings) that Tailwind utilities do not cover. */
+:root {
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --ring-width: 1.5px;
+}

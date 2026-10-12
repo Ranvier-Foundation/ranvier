@@ -1,20 +1,71 @@
 @import 'tailwindcss';
+@import '../styles/tokens.css';
 
-/* Direction B tokens (Ranvier UI design canvas). */
-@theme {
-  --color-canvas: #f7f4f2;
-  --color-surface: #ffffff;
-  --color-chip: #ede6e2;
-  --color-ink: #1c1011;
-  --color-muted: #6e5f61;
-  --color-brand: #9b2c35;
-  --color-brand-deep: #3b1519;
-  --color-blush: #f2b8a6;
-  --font-sans: 'Inter Variable', system-ui, sans-serif;
+@layer base {
+  html {
+    background: var(--color-bg);
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    font-optical-sizing: auto;
+    margin: 0;
+  }
+  ::selection {
+    background: var(--color-blush);
+    color: var(--color-ink);
+  }
+  button,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  /* Visible focus: 2 px outline in currentColor, 2 px offset. */
+  :focus-visible {
+    outline: var(--focus-width) solid currentColor;
+    outline-offset: var(--focus-offset);
+  }
+  /* Inputs show an inset primary ring on the field instead. */
+  input:focus-visible {
+    outline: var(--ring-width) solid var(--color-primary);
+    outline-offset: calc(var(--ring-width) * -1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation: none !important;
+      transition-duration: 0s !important;
+    }
+  }
 }
 
-body {
-  background: var(--color-canvas);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
+/* Numbers: tabular figures, stylistic set 1, tight tracking. */
+@utility num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings:
+    'tnum' 1,
+    'ss01' 1;
+  letter-spacing: var(--tracking-num);
+}
+
+/* Addresses: tabular figures and slashed zero. */
+@utility addr {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings:
+    'tnum' 1,
+    'zero' 1;
+}
+
+/*
+ * Header grid: logo left, nav centred, controls right. Equal side columns as drawn; they grow
+ * to their content below the width where the canvas layout would need them to shrink.
+ */
+@utility grid-cols-header {
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
 }

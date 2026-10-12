@@ -6,8 +6,37 @@ export const MAX_FEE_BPS = 30;
 export const BPS_DENOMINATOR = 10_000n;
 
 export const FIRST_SWAP_PROMO_CAP: UsdCents = 1_000_00n;
-const TIER_1_UPPER: UsdCents = 10_000_00n;
-const TIER_2_UPPER: UsdCents = 100_000_00n;
+
+/**
+ * Freezes an object and every object nested in it, so runtime code cannot change values that
+ * end up in signed quotes. Returns the same reference with its type unchanged.
+ */
+function deepFreeze<T extends object>(value: T): T {
+  for (const nested of Object.values(value) as unknown[]) {
+    if (typeof nested === 'object' && nested !== null && !Object.isFrozen(nested)) {
+      deepFreeze(nested);
+    }
+  }
+  return Object.freeze(value);
+}
+
+/**
+ * The fee schedule as data: the single source for `feeRate` and for anything that shows the
+ * schedule to a user. Rule order and precedence are in ADR 0002. Deep-frozen at runtime
+ * (`as const` is type-level only) because the API signs whatever `feeRate` returns.
+ */
+export const FEE_SCHEDULE = deepFreeze({
+  wrapUnwrapBps: 0,
+  stablecoinBps: 5,
+  /** Rate below `upperUsd`. */
+  tier1: { upperUsd: 10_000_00n as UsdCents, bps: 20 },
+  /** Rate from `tier1.upperUsd` up to and including `upperUsd`. */
+  tier2: { upperUsd: 100_000_00n as UsdCents, bps: 15 },
+  /** Rate above `tier2.upperUsd`. */
+  tier3: { bps: 10 },
+  firstSwapFreeUsd: FIRST_SWAP_PROMO_CAP,
+  maxBps: MAX_FEE_BPS,
+} as const);
 
 export interface FeeInput {
   sellToken: TokenRef;
@@ -48,11 +77,19 @@ export function feeRate(input: Pick<FeeInput, 'sellToken' | 'buyToken' | 'usdVal
   const { sellToken, buyToken, usdValue } = input;
   if (usdValue < 0n) throw new RangeError('usdValue must be non-negative');
 
-  if (isWrapOrUnwrap(sellToken, buyToken)) return { bps: 0, reason: 'wrap-unwrap' };
-  if (isStablePair(sellToken, buyToken)) return { bps: 5, reason: 'stablecoin' };
-  if (usdValue < TIER_1_UPPER) return { bps: 20, reason: 'tier-under-10k' };
-  if (usdValue <= TIER_2_UPPER) return { bps: 15, reason: 'tier-10k-100k' };
-  return { bps: 10, reason: 'tier-over-100k' };
+  if (isWrapOrUnwrap(sellToken, buyToken)) {
+    return { bps: FEE_SCHEDULE.wrapUnwrapBps, reason: 'wrap-unwrap' };
+  }
+  if (isStablePair(sellToken, buyToken)) {
+    return { bps: FEE_SCHEDULE.stablecoinBps, reason: 'stablecoin' };
+  }
+  if (usdValue < FEE_SCHEDULE.tier1.upperUsd) {
+    return { bps: FEE_SCHEDULE.tier1.bps, reason: 'tier-under-10k' };
+  }
+  if (usdValue <= FEE_SCHEDULE.tier2.upperUsd) {
+    return { bps: FEE_SCHEDULE.tier2.bps, reason: 'tier-10k-100k' };
+  }
+  return { bps: FEE_SCHEDULE.tier3.bps, reason: 'tier-over-100k' };
 }
 
 export function feeAmount(sellAmount: bigint, bps: number): bigint {

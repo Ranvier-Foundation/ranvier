@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Token } from '@ranvier/types';
 import {
+  BPS_DENOMINATOR,
+  FEE_SCHEDULE,
+  FIRST_SWAP_PROMO_CAP,
   feeAmount,
   feeRate,
   isWrapOrUnwrap,
@@ -190,5 +193,119 @@ describe('quoteFee', () => {
         expect(promo.amount * 10_000n).toBeLessThanOrEqual(usdc(dollars) * BigInt(MAX_FEE_BPS));
       }
     });
+  });
+});
+
+describe('FEE_SCHEDULE', () => {
+  const cases: [string, FeeInput, number][] = [
+    ['wrap', { ...base, sellToken: ETH, buyToken: WETH }, FEE_SCHEDULE.wrapUnwrapBps],
+    ['stablecoin pair', { ...base, sellToken: USDC, buyToken: USDT }, FEE_SCHEDULE.stablecoinBps],
+    ['tier 1', { ...base, usdValue: FEE_SCHEDULE.tier1.upperUsd - 1n }, FEE_SCHEDULE.tier1.bps],
+    [
+      'tier 2 lower bound',
+      { ...base, usdValue: FEE_SCHEDULE.tier1.upperUsd },
+      FEE_SCHEDULE.tier2.bps,
+    ],
+    [
+      'tier 2 upper bound',
+      { ...base, usdValue: FEE_SCHEDULE.tier2.upperUsd },
+      FEE_SCHEDULE.tier2.bps,
+    ],
+    ['tier 3', { ...base, usdValue: FEE_SCHEDULE.tier2.upperUsd + 1n }, FEE_SCHEDULE.tier3.bps],
+  ];
+  it.each(cases)('feeRate follows the schedule constant: %s', (_name, input, bps) => {
+    expect(feeRate(input).bps).toBe(bps);
+  });
+
+  it('holds the documented values and stays within the contract cap', () => {
+    expect(FEE_SCHEDULE).toEqual({
+      wrapUnwrapBps: 0,
+      stablecoinBps: 5,
+      tier1: { upperUsd: 1_000_000n, bps: 20 },
+      tier2: { upperUsd: 10_000_000n, bps: 15 },
+      tier3: { bps: 10 },
+      firstSwapFreeUsd: 100_000n,
+      maxBps: 30,
+    });
+    for (const bps of [
+      FEE_SCHEDULE.wrapUnwrapBps,
+      FEE_SCHEDULE.stablecoinBps,
+      FEE_SCHEDULE.tier1.bps,
+      FEE_SCHEDULE.tier2.bps,
+      FEE_SCHEDULE.tier3.bps,
+    ]) {
+      expect(bps).toBeLessThanOrEqual(FEE_SCHEDULE.maxBps);
+    }
+  });
+});
+
+describe('FEE_SCHEDULE is immutable at runtime', () => {
+  /** The schedule as plain mutable data, to attempt the writes `as const` forbids at compile time. */
+  type Mutable = {
+    wrapUnwrapBps: number;
+    stablecoinBps: number;
+    tier1: { upperUsd: bigint; bps: number };
+    tier2: { upperUsd: bigint; bps: number };
+    tier3: { bps: number };
+    firstSwapFreeUsd: bigint;
+    maxBps: number;
+  };
+  const mutable = FEE_SCHEDULE as unknown as Mutable;
+
+  it('freezes the outer object and every nested object', () => {
+    expect(Object.isFrozen(FEE_SCHEDULE)).toBe(true);
+    for (const value of Object.values(FEE_SCHEDULE) as unknown[]) {
+      if (typeof value === 'object' && value !== null) expect(Object.isFrozen(value)).toBe(true);
+    }
+    expect(Object.isFrozen(FEE_SCHEDULE.tier1)).toBe(true);
+    expect(Object.isFrozen(FEE_SCHEDULE.tier2)).toBe(true);
+    expect(Object.isFrozen(FEE_SCHEDULE.tier3)).toBe(true);
+  });
+
+  it('throws on assignment in strict mode (ES modules are strict)', () => {
+    expect(() => {
+      mutable.tier1.bps = 30;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.tier2.upperUsd = 0n;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.tier3.bps = 30;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.stablecoinBps = 30;
+    }).toThrow(TypeError);
+    expect(() => {
+      mutable.tier1 = { upperUsd: 0n, bps: 30 };
+    }).toThrow(TypeError);
+    expect(() => {
+      (mutable as unknown as Record<string, unknown>).extra = 1;
+    }).toThrow(TypeError);
+  });
+
+  it('feeRate still returns the documented rates after a mutation attempt', () => {
+    const attempts: (() => void)[] = [
+      () => (mutable.tier1.bps = 30),
+      () => (mutable.tier1.upperUsd = 0n),
+      () => (mutable.tier2.bps = 30),
+      () => (mutable.tier3.bps = 30),
+      () => (mutable.stablecoinBps = 30),
+      () => (mutable.wrapUnwrapBps = 30),
+    ];
+    for (const attempt of attempts) expect(attempt).toThrow(TypeError);
+    expect(rate({ usdValue: 9_999_99n })).toEqual({ bps: 20, reason: 'tier-under-10k' });
+    expect(rate({ usdValue: 10_000_00n })).toEqual({ bps: 15, reason: 'tier-10k-100k' });
+    expect(rate({ usdValue: 100_000_00n })).toEqual({ bps: 15, reason: 'tier-10k-100k' });
+    expect(rate({ usdValue: 100_000_01n })).toEqual({ bps: 10, reason: 'tier-over-100k' });
+    expect(rate({ sellToken: USDC, buyToken: USDT })).toEqual({ bps: 5, reason: 'stablecoin' });
+    expect(rate({ sellToken: ETH, buyToken: WETH })).toEqual({ bps: 0, reason: 'wrap-unwrap' });
+  });
+
+  it('keeps the exported primitives at their documented values', () => {
+    expect(MAX_FEE_BPS).toBe(30);
+    expect(BPS_DENOMINATOR).toBe(10_000n);
+    expect(FIRST_SWAP_PROMO_CAP).toBe(100_000n);
+    expect(FEE_SCHEDULE.maxBps).toBe(MAX_FEE_BPS);
+    expect(FEE_SCHEDULE.firstSwapFreeUsd).toBe(FIRST_SWAP_PROMO_CAP);
   });
 });

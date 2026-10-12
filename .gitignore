@@ -17,3 +17,5 @@ next-env.d.ts
 
 # Internal business spec: kept local, never committed
 docs/private/
+apps/web/test-results
+apps/web/playwright-report
