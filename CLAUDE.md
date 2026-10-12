@@ -25,6 +25,10 @@ The full internal spec lives at `docs/private/spec.md`. It is git-ignored and ne
 - Money amounts are `bigint` base units; USD values are integer cents. Never use floats for money.
 - Fee rates are basis points and must never exceed the contract cap (30 bps).
 
+## UI work
+
+Follow [docs/ui-guidelines.md](docs/ui-guidelines.md) exactly: token names from the design handoff, one source of truth for every value, reuse components, match the design canvas to the pixel at 1440, 1200, 768 and 390 px, no hard-coded numbers or promises in copy (derive them from `@ranvier/fees` and `@ranvier/chains`), handle every state, WCAG 2.1 AA. A screen is done only when the verification list in that file passes. If code, canvas and spec disagree, stop and report instead of choosing silently.
+
 ## Model use
 
 Follow section 13 of the project spec. You are the coordinator. Never do work from the Opus list yourself: always delegate it to the matching agent (architect, contract-engineer, routing-engineer, security-reviewer), including follow-up fixes. Every diff that touches contracts, fees, treasury, keys, auth or signing goes to security-reviewer before it is called done. Hand UI work to ui-builder, tests to test-writer and chores to chore-runner.
