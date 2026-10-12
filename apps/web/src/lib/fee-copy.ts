@@ -16,8 +16,16 @@ export function feeSummary() {
     tier1: formatBps(FEE_SCHEDULE.tier1.bps),
     tier2: formatBps(FEE_SCHEDULE.tier2.bps),
     tier3: formatBps(FEE_SCHEDULE.tier3.bps),
-    tier1UpTo: formatUsd(FEE_SCHEDULE.tier1.upperUsd),
-    tier2UpTo: formatUsd(FEE_SCHEDULE.tier2.upperUsd),
+    /** Tier 1 applies strictly below this value. */
+    tier1Below: formatUsd(FEE_SCHEDULE.tier1.upperUsd),
+    /** Tier 2 applies up to and including this value. */
+    tier2UpToInclusive: formatUsd(FEE_SCHEDULE.tier2.upperUsd),
+    tier1Range: t('fee.tier1.range', { limit: formatUsd(FEE_SCHEDULE.tier1.upperUsd) }),
+    tier2Range: t('fee.tier2.range', {
+      from: formatUsd(FEE_SCHEDULE.tier1.upperUsd),
+      to: formatUsd(FEE_SCHEDULE.tier2.upperUsd),
+    }),
+    tier3Range: t('fee.tier3.range', { limit: formatUsd(FEE_SCHEDULE.tier2.upperUsd) }),
     stablecoin: formatBps(FEE_SCHEDULE.stablecoinBps),
     wrapUnwrap:
       FEE_SCHEDULE.wrapUnwrapBps === 0 ? t('fee.free') : formatBps(FEE_SCHEDULE.wrapUnwrapBps),

@@ -45,8 +45,11 @@ describe('fee copy comes from FEE_SCHEDULE', () => {
       tier1: '0.2%',
       tier2: '0.15%',
       tier3: '0.1%',
-      tier1UpTo: '$10,000.00',
-      tier2UpTo: '$100,000.00',
+      tier1Below: '$10,000.00',
+      tier2UpToInclusive: '$100,000.00',
+      tier1Range: 'Under $10,000.00',
+      tier2Range: '$10,000.00 up to and including $100,000.00',
+      tier3Range: 'Above $100,000.00',
       stablecoin: '0.05%',
       wrapUnwrap: 'Free',
       cap: '0.3%',
@@ -61,6 +64,8 @@ describe('fee copy comes from FEE_SCHEDULE', () => {
     expect(s.stablecoin).toBe(formatBps(FEE_SCHEDULE.stablecoinBps));
     expect(s.cap).toBe(formatBps(FEE_SCHEDULE.maxBps));
     expect(s.firstSwapFree).toBe(formatUsd(FEE_SCHEDULE.firstSwapFreeUsd));
+    expect(s.tier1Below).toBe(formatUsd(FEE_SCHEDULE.tier1.upperUsd));
+    expect(s.tier2UpToInclusive).toBe(formatUsd(FEE_SCHEDULE.tier2.upperUsd));
   });
 });
 

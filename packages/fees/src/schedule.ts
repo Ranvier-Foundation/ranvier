@@ -8,10 +8,24 @@ export const BPS_DENOMINATOR = 10_000n;
 export const FIRST_SWAP_PROMO_CAP: UsdCents = 1_000_00n;
 
 /**
- * The fee schedule as data: the single source for `feeRate` and for anything that shows the
- * schedule to a user. Rule order and precedence are in ADR 0002.
+ * Freezes an object and every object nested in it, so runtime code cannot change values that
+ * end up in signed quotes. Returns the same reference with its type unchanged.
  */
-export const FEE_SCHEDULE = {
+function deepFreeze<T extends object>(value: T): T {
+  for (const nested of Object.values(value) as unknown[]) {
+    if (typeof nested === 'object' && nested !== null && !Object.isFrozen(nested)) {
+      deepFreeze(nested);
+    }
+  }
+  return Object.freeze(value);
+}
+
+/**
+ * The fee schedule as data: the single source for `feeRate` and for anything that shows the
+ * schedule to a user. Rule order and precedence are in ADR 0002. Deep-frozen at runtime
+ * (`as const` is type-level only) because the API signs whatever `feeRate` returns.
+ */
+export const FEE_SCHEDULE = deepFreeze({
   wrapUnwrapBps: 0,
   stablecoinBps: 5,
   /** Rate below `upperUsd`. */
@@ -22,7 +36,7 @@ export const FEE_SCHEDULE = {
   tier3: { bps: 10 },
   firstSwapFreeUsd: FIRST_SWAP_PROMO_CAP,
   maxBps: MAX_FEE_BPS,
-} as const;
+} as const);
 
 export interface FeeInput {
   sellToken: TokenRef;
