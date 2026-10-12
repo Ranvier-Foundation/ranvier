@@ -10,7 +10,8 @@ import { usdCents } from '../domain/usd.js';
 import { buildDirectWrap } from '../domain/wrap.js';
 import type { PriceOracle, SwapHistory, TokenPrice } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
-import type { QuoteSigner } from '../ports/quote-signer.js';
+import { SigningUnavailableError, type QuoteSigner } from '../ports/quote-signer.js';
+import { canSignChain } from '../signing-policy.js';
 import { feePreviewSchema, invalidRequest, quoteRequestSchema } from './schemas.js';
 
 export interface ServerDeps {
@@ -145,21 +146,33 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const canSign =
       signing && chainId !== undefined && request.buyToken.chain === request.sellToken.chain;
     if (!canSign) return toJson({ fee, ...comparison });
-    if (!signing.signer.canSign(chainId)) {
+    // The signer must accept the chain, the chain must have a trusted router policy, and a
+    // mainnet needs a KMS signer (ADR 0005).
+    if (!canSignChain(signing.signer, routePolicy, chainId)) {
       req.log.error({ chainId }, 'signer refuses a chain providers quoted');
       return reply.code(503).send({ error: 'signing_unavailable' });
     }
 
     const nowSeconds = Math.floor((signing.now ?? Date.now)() / 1000);
-    const swap = await buildSignedSwap({
-      request,
-      fee,
-      route: comparison.best,
-      feeWrapper: signing.feeWrapper,
-      signer: signing.signer,
-      deadline: BigInt(nowSeconds + signing.ttlSeconds),
-      nonce: (signing.nonce ?? randomNonce)(),
-    });
+    let swap;
+    try {
+      swap = await buildSignedSwap({
+        request,
+        fee,
+        route: comparison.best,
+        feeWrapper: signing.feeWrapper,
+        signer: signing.signer,
+        deadline: BigInt(nowSeconds + signing.ttlSeconds),
+        nonce: (signing.nonce ?? randomNonce)(),
+      });
+    } catch (err: unknown) {
+      // Busy, timed out, upstream (KMS) failure or a signature that failed self-verification.
+      // Clients get the stable code only; the reason goes to the log.
+      if (!(err instanceof SigningUnavailableError)) throw err;
+      const level = err.reason === 'integrity' ? 'error' : 'warn';
+      req.log[level]({ chainId, reason: err.reason, err: errSummary(err) }, 'signing failed');
+      return reply.code(503).send({ error: 'signing_unavailable' });
+    }
     return toJson({ fee, ...comparison, swap });
   });
 

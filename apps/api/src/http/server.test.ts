@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderQuote, QuoteRequest, TokenRef } from '@ranvier/types';
-import { padHex, type Hex } from 'viem';
+import { padHex, recoverTypedDataAddress, type Hex } from 'viem';
+import { KmsSigner } from '../adapters/signers/kms.js';
 import { LocalKeySigner } from '../adapters/signers/local-key.js';
 import { ZEROX_NATIVE_IN } from '../domain/allowance-holder.js';
 import { buildRoutePolicy } from '../domain/route-policy.js';
 import { signedMinimum, slippageFloor } from '../domain/route-safety.js';
+import { typedData } from '../domain/swap-quote.js';
 import type { PriceOracle, TokenPrice } from '../ports/price-oracle.js';
 import type { QuoteProvider } from '../ports/quote-provider.js';
+import { SigningUnavailableError } from '../ports/quote-signer.js';
+import { FAKE_ALIAS, FakeKms } from '../testing/fake-kms.js';
 import { ALLOWANCE_HOLDER, ATTACKER, SETTLER, zeroXRoute } from '../testing/zero-x-route.js';
 import { buildServer, type ServerDeps } from './server.js';
 
@@ -287,6 +291,112 @@ describe('http', () => {
     expect(res.json()).toEqual({ error: 'signing_unavailable' });
   });
 
+  describe('KMS signer (ADR 0005)', () => {
+    const kmsSigning = async (chainIds = [1, 8453]) => ({
+      ...SIGNING,
+      signer: await KmsSigner.create({
+        keyId: FAKE_ALIAS,
+        transport: new FakeKms({ privateKey: padHex('0xa11ce', { size: 32 }) }),
+        chainIds,
+      }),
+    });
+
+    it('signs a mainnet quote with a KMS signer and a trusted router policy', async () => {
+      const signing = await kmsSigning();
+      const res = await post(deps({ signing }), quoteBody);
+      expect(res.statusCode).toBe(200);
+      const { swap } = res.json();
+      expect(swap.signature).toMatch(/^0x[0-9a-f]{130}$/);
+      const recovered = await recoverTypedDataAddress({
+        ...typedData(
+          {
+            ...swap.quote,
+            amountIn: BigInt(swap.quote.amountIn),
+            minAmountOut: BigInt(swap.quote.minAmountOut),
+            feeAmount: BigInt(swap.quote.feeAmount),
+            nonce: BigInt(swap.quote.nonce),
+            deadline: BigInt(swap.quote.deadline),
+          },
+          1,
+          SIGNING.feeWrapper,
+        ),
+        signature: swap.signature,
+      } as Parameters<typeof recoverTypedDataAddress>[0]);
+      expect(recovered).toBe(signing.signer.address);
+    });
+
+    it('refuses a mainnet the KMS signer is not configured for, or without a router policy', async () => {
+      const notConfigured = await post(deps({ signing: await kmsSigning([8453]) }), quoteBody);
+      expect(notConfigured.statusCode).toBe(503);
+      expect(notConfigured.json()).toEqual({ error: 'signing_unavailable' });
+      // Policy without chain 1: no route can be vetted, so nothing reaches the signer.
+      const noPolicy = await post(
+        deps({ signing: await kmsSigning(), routePolicy: buildRoutePolicy({}) }),
+        quoteBody,
+      );
+      expect(noPolicy.statusCode).toBe(502);
+    });
+
+    it('refuses a mainnet for a non-KMS signer that claims it can sign it', async () => {
+      let signed = 0;
+      const rogue = {
+        ...SIGNING,
+        signer: {
+          kind: 'local-key' as const,
+          address: SIGNING.signer.address,
+          canSign: () => true,
+          signTypedData: async (): Promise<Hex> => {
+            signed++;
+            return '0x';
+          },
+        },
+      };
+      const res = await post(deps({ signing: rogue }), quoteBody);
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toEqual({ error: 'signing_unavailable' });
+      expect(signed).toBe(0);
+    });
+
+    for (const reason of ['busy', 'timeout', 'upstream', 'integrity'] as const) {
+      it(`answers 503 signing_unavailable when signing fails (${reason}), without AWS details`, async () => {
+        const failing = {
+          ...SIGNING,
+          signer: {
+            kind: 'kms' as const,
+            address: SIGNING.signer.address,
+            canSign: () => true,
+            signTypedData: async (): Promise<Hex> => {
+              throw new SigningUnavailableError(
+                reason,
+                'AccessDeniedException: arn:aws:kms:eu-west-1:111122223333:key/secret-detail',
+              );
+            },
+          },
+        };
+        const res = await post(deps({ signing: failing }), quoteBody);
+        expect(res.statusCode).toBe(503);
+        expect(res.body).toBe(JSON.stringify({ error: 'signing_unavailable' }));
+      });
+    }
+
+    it('keeps 500 internal_error for unexpected signer errors', async () => {
+      const broken = {
+        ...SIGNING,
+        signer: {
+          kind: 'kms' as const,
+          address: SIGNING.signer.address,
+          canSign: () => true,
+          signTypedData: async (): Promise<Hex> => {
+            throw new Error('bug: AccessDeniedException detail');
+          },
+        },
+      };
+      const res = await post(deps({ signing: broken }), quoteBody);
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'internal_error' });
+    });
+  });
+
   describe('finding 1: decimals come from the oracle, never the client', () => {
     it('rejects client-supplied decimals and symbol (exploit replay: USDC decimals 0 and 36)', async () => {
       const calls: TokenRef[] = [];
@@ -384,6 +494,7 @@ describe('http', () => {
         const spy = {
           ...SIGNING,
           signer: {
+            kind: 'local-key' as const,
             address: SIGNING.signer.address,
             canSign: () => true,
             signTypedData: async (): Promise<Hex> => {

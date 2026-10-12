@@ -50,6 +50,7 @@ export interface LocalKeySignerOptions {
 export class LocalKeySigner implements QuoteSigner {
   private readonly account;
   private readonly allowed: ReadonlySet<number>;
+  readonly kind = 'local-key' as const;
   readonly address: Hex;
 
   constructor(privateKey: Hex, opts: LocalKeySignerOptions = {}) {
