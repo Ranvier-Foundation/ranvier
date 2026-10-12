@@ -1,0 +1,10 @@
+# Default gitleaks rules, plus one exception: public EVM addresses (token and contract
+# addresses, exactly 20 bytes) trip the generic-api-key rule when the JSON key contains
+# "token". Private keys are 32 bytes (64 hex characters) and are still detected.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public EVM addresses are not secrets"
+regexTarget = "secret"
+regexes = ['''^0x[0-9a-fA-F]{40}$''']
