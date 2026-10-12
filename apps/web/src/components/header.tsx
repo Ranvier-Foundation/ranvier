@@ -107,7 +107,7 @@ function WalletPill({ address }: { address: string }) {
 export function Header({ active = 'swap', wallet, network, activityCount = 0 }: HeaderProps) {
   const selected = network ?? defaultNetwork().key;
   return (
-    <header className="grid grid-cols-header items-center gap-20 px-20 py-16 text-body whitespace-nowrap max-narrow:gap-8 max-narrow:px-16">
+    <header className="grid grid-cols-header items-center gap-20 px-20 py-16 text-body whitespace-nowrap max-narrow:gap-8">
       <div className="flex min-w-0 items-center">
         <Link
           href="/"
@@ -128,7 +128,7 @@ export function Header({ active = 'swap', wallet, network, activityCount = 0 }: 
           />
         ))}
       </nav>
-      <div className="flex min-w-0 items-center justify-end gap-6">
+      <div className="col-start-3 flex min-w-0 items-center justify-end gap-6">
         <NetworkPill network={selected} />
         {wallet ? (
           <WalletPill address={wallet.address} />

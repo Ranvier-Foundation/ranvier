@@ -14,5 +14,6 @@ Non-negotiable:
 - Handle every state (loading, empty, error, disabled, in progress, success, warning, blocked). Strings live in message files (i18n-ready).
 - WCAG 2.1 AA: real buttons, links and inputs, 44 px targets, visible focus, aria labels, reduced motion respected.
 - Add a Playwright visual test (1440 and 390 px) and an axe scan per screen. Record any intentional deviation from the canvas in docs/ui-guidelines.md.
+- Numbers are not enough. Before calling a task done, build, run `pnpm --filter @ranvier/web screenshot` (needs `PLAYWRIGHT_CHROMIUM_PATH`), open the PNGs at 1440, 1200, 768 and 390 px, look at them, and put a short list in the PR of what you saw at each width and any difference from the artboard. Alignment and composition errors pass value assertions.
 
 If the canvas and the code or spec disagree, stop and report the difference instead of choosing silently.

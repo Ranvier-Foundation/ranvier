@@ -200,6 +200,7 @@ A screen is done when all of these hold:
 3. Playwright conformance tests for the screen exist, at 1440 px and 390 px (and 1200 and 768 for the header), asserting computed values for the default and the main error and empty states. They assert values, not pixel baselines, because fonts differ between machines.
 4. An automated accessibility scan (axe) passes, and the keyboard path has been walked by hand.
 5. Every string comes from the message files, and every number from the API or shared packages.
+6. **Looked at, not only measured.** Screenshots at 1440, 1200, 768 and 390 px were taken with `pnpm --filter @ranvier/web screenshot` (see [Looking at the page locally](#looking-at-the-page-locally)), the PNGs were opened and viewed, and the PR lists what was seen at each width (header, panel, button) and any difference from the artboard. Numeric assertions miss alignment and composition errors (a header group floating away from the right edge passed every value test), so a task without this list is not done.
 
 ### Token guard
 
@@ -222,6 +223,25 @@ pnpm e2e                                                      # builds, starts t
 ```
 
 `apps/web/tests/e2e` holds the geometry and computed-style tests (`swap.spec.ts`) and the axe, keyboard and reduced-motion tests (`a11y.spec.ts`). They run against `next build` plus `next start` on port 3100, in CI after the build. Unit tests (`pnpm --filter @ranvier/web test`) cover the tokens against the colour table above, the logo geometry for every reference size, the message files, the fee copy and the guard.
+
+## Looking at the page locally
+
+Owner setup: system Chromium, because downloading Playwright's browser from its CDN is very slow on this network.
+
+```
+sudo pacman -S chromium
+PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/chromium pnpm --filter @ranvier/web e2e
+```
+
+When `PLAYWRIGHT_CHROMIUM_PATH` is set, `playwright.config.ts` launches that executable (with `--no-sandbox` when `CI` is unset). Unset, Playwright uses its own browser as before; CI is unchanged.
+
+Screenshots of the production build (run `pnpm --filter @ranvier/web build` first):
+
+```
+PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/chromium pnpm --filter @ranvier/web screenshot [/route ...] [--out dir]
+```
+
+It starts `next start` on a free port, waits for `load` and `document.fonts.ready` (not `networkidle`, which never settles on this app), saves `<route>-<width>x<height>.png` at 1440x900, 1200x800, 768x1024 and 390x844 into `--out` (default `apps/web/.screenshots`, git-ignored), stops the server even on error and prints the file list. Open the PNGs and look at them.
 
 ## Deviations
 
