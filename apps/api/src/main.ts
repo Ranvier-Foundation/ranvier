@@ -1,10 +1,12 @@
+import { KMSClient } from '@aws-sdk/client-kms';
 import { AssumeReturningWallets } from './adapters/history/assume-returning.js';
 import { DefiLlamaPriceOracle } from './adapters/prices/defillama.js';
-import { assertLocalSigningChains, LocalKeySigner } from './adapters/signers/local-key.js';
+import { awsKmsTransport, KmsSigner } from './adapters/signers/kms.js';
 import { ZeroXProvider } from './adapters/providers/zero-x.js';
 import { loadConfig } from './config.js';
 import { buildServer } from './http/server.js';
 import type { QuoteProvider } from './ports/quote-provider.js';
+import { setUpSigning } from './signer-setup.js';
 import { TRUSTED_ROUTERS } from './trusted-routers.js';
 
 const config = loadConfig();
@@ -22,20 +24,14 @@ if (config.ZEROX_API_KEY && config.FEE_WRAPPER_ADDRESS) {
   );
 }
 
-let signing;
-if (config.QUOTE_SIGNER_PRIVATE_KEY && config.FEE_WRAPPER_ADDRESS) {
-  // Refuses NODE_ENV=production and any mainnet chain ID; then every chain the API quotes
-  // must be signable, or startup fails here rather than at the first quote.
-  const signer = new LocalKeySigner(config.QUOTE_SIGNER_PRIVATE_KEY as `0x${string}`, {
-    ...(config.LOCAL_SIGNER_CHAIN_IDS ? { allowedChainIds: config.LOCAL_SIGNER_CHAIN_IDS } : {}),
-  });
-  assertLocalSigningChains(config.ZEROX_CHAIN_IDS, signer);
-  signing = {
-    feeWrapper: config.FEE_WRAPPER_ADDRESS as `0x${string}`,
-    signer,
-    ttlSeconds: config.QUOTE_TTL_SECONDS,
-  };
-}
+// Fails startup (rejects) on a bad signer configuration or any KMS error. Credentials come
+// from the default AWS provider chain; the SDK's own retries are off (KmsSigner retries once).
+// Once RPC access exists, compare FeeWrapper.feeSigner() with the signer address here
+// (ADR 0005).
+const signing = await setUpSigning(config, {
+  policy: TRUSTED_ROUTERS,
+  kmsTransport: (region) => awsKmsTransport(new KMSClient({ region, maxAttempts: 1 })),
+});
 
 const app = buildServer({
   providers,
@@ -49,8 +45,14 @@ const app = buildServer({
   ...(signing ? { signing } : {}),
 });
 
+// The signer address and key ARN only: never credentials.
 app.log.info(
-  { providers: providers.map((p) => p.name), signer: signing?.signer.address ?? null },
+  {
+    providers: providers.map((p) => p.name),
+    signer: signing?.signer.address ?? null,
+    signerKind: signing?.signer.kind ?? null,
+    kmsKeyArn: signing?.signer instanceof KmsSigner ? signing.signer.keyArn : null,
+  },
   'quote service configured',
 );
 

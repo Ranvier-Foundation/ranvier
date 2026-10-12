@@ -7,11 +7,14 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
-    "test": "vitest run --coverage"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
+    "lint": "eslint src scripts",
+    "test": "vitest run --coverage",
+    "kms:smoke": "tsx scripts/kms-smoke.ts",
+    "check:aws-overrides": "tsx scripts/check-aws-overrides.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "3.1141.0",
     "@ranvier/chains": "workspace:*",
     "@ranvier/fees": "workspace:*",
     "@ranvier/types": "workspace:*",

@@ -25,7 +25,7 @@ The fee is taken from the input token, before the swap, on the source chain.
 | Native wrap/unwrap                    | Free  |
 | First $1,000 of a wallet's first swap | Free  |
 
-The backend signs the exact fee amount into each quote (EIP-712). The contract only accepts signed fees and enforces a hard cap of 0.3% of the input. See [ADR 0002](adr/0002-fee-schedule-semantics.md).
+The backend signs the exact fee amount into each quote (EIP-712). The contract only accepts signed fees and enforces a hard cap of 0.3% of the input. See [ADR 0002](adr/0002-fee-schedule-semantics.md). In production the signing key is held in AWS KMS and never leaves it; see [ADR 0005](adr/0005-aws-kms-quote-signer.md).
 
 ## Architecture
 
