@@ -10,7 +10,11 @@ export interface ChainConfig {
   nativeDecimals: number;
   /** Wrapped native token address, used to detect wrap/unwrap swaps. */
   wrappedNative: string;
-  /** Allowlisted major stablecoins (spec section 2: stablecoin fee). */
+  /**
+   * Allowlisted major stablecoins, keyed by symbol (spec section 2: "USDC, USDT, DAI, etc." pay
+   * the stablecoin rate). Fee data: changes go to the security reviewer. For chains with a
+   * curated token list it must equal the list's `stablecoin`-tagged tokens (tokens.test.ts).
+   */
   stablecoins: Record<string, string>;
   /**
    * Checked-in decimals for every token this registry or the curated token list names, keyed by
@@ -52,7 +56,10 @@ export const CHAINS: readonly ChainConfig[] = [
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     wrappedNative: '0x4200000000000000000000000000000000000006',
-    stablecoins: { USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' },
+    stablecoins: {
+      USDC: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      DAI: '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    },
     knownDecimals: listedDecimals('evm:8453'),
     explorer: 'https://basescan.org',
     defillama: 'base',
@@ -64,7 +71,12 @@ export const CHAINS: readonly ChainConfig[] = [
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     wrappedNative: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
-    stablecoins: { USDC: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' },
+    stablecoins: {
+      USDC: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
+      // Tether's USDT on Arbitrum (USDT0).
+      USDT0: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
+      DAI: '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',
+    },
     knownDecimals: listedDecimals('evm:42161'),
     explorer: 'https://arbiscan.io',
     defillama: 'arbitrum',

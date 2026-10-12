@@ -1,7 +1,11 @@
-import type { ChainKey } from '@ranvier/types';
+import type { ChainKey, TokenTag } from '@ranvier/types';
 import { describe, expect, it } from 'vitest';
-import { CHAINS, getChain, isValidTokenAddress, knownDecimals } from './registry.js';
+import { CHAINS, getChain, isStablecoin, isValidTokenAddress, knownDecimals } from './registry.js';
 import {
+  ARB_STANDARD_GATEWAY,
+  ARB_WETH_GATEWAY,
+  type CuratedToken,
+  OP_STANDARD_BRIDGE,
   listedDecimals,
   listTokens,
   MIN_NAME_QUERY_LENGTH,
@@ -68,6 +72,91 @@ describe('curated token list: data rules (ADR 0006)', () => {
   });
 });
 
+describe('display and fees agree: stablecoin tag == registry stablecoins', () => {
+  it('tags exactly the registry stablecoins of each listed chain, keyed by symbol', () => {
+    for (const key of LISTED_CHAINS) {
+      const chain = getChain(key);
+      if (!chain) throw new Error(key);
+      const tagged = Object.fromEntries(
+        listTokens(key)
+          .filter((t) => t.tags?.includes('stablecoin'))
+          .map((t) => [t.symbol, t.address]),
+      );
+      expect(tagged, key).toEqual(chain.stablecoins);
+    }
+  });
+
+  it('pins the stablecoin allowlist per chain (spec section 2: USDC, USDT, DAI)', () => {
+    const symbolsOf = (key: ChainKey) => Object.keys(getChain(key)?.stablecoins ?? {}).sort();
+    expect(symbolsOf('evm:1')).toEqual(['DAI', 'USDC', 'USDT']);
+    expect(symbolsOf('evm:8453')).toEqual(['DAI', 'USDC']);
+    expect(symbolsOf('evm:42161')).toEqual(['DAI', 'USDC', 'USDT0']);
+    expect(isStablecoin('evm:8453', '0x50C5725949A6F0c72E6C4a641F24049A917DB0Cb')).toBe(true);
+    expect(isStablecoin('evm:42161', '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9')).toBe(true);
+    expect(isStablecoin('evm:42161', '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1')).toBe(true);
+    // cbBTC is listed but is not a stablecoin.
+    expect(isStablecoin('evm:8453', '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf')).toBe(false);
+  });
+});
+
+describe('TOKEN_LIST is immutable at runtime', () => {
+  it('freezes the list, every entry and every nested object', () => {
+    expect(Object.isFrozen(TOKEN_LIST)).toBe(true);
+    for (const t of TOKEN_LIST) {
+      expect(Object.isFrozen(t)).toBe(true);
+      if (t.tags) expect(Object.isFrozen(t.tags)).toBe(true);
+      if (t.bridge) expect(Object.isFrozen(t.bridge)).toBe(true);
+    }
+  });
+
+  it('throws on mutation (ES modules are strict) and keeps the values', () => {
+    const usdc = TOKEN_LIST.find((t) => t.chain === 'evm:1' && t.symbol === 'USDC');
+    if (!usdc) throw new Error('no USDC');
+    expect(() => {
+      (usdc as { decimals: number }).decimals = 18;
+    }).toThrow(TypeError);
+    expect(() => {
+      (TOKEN_LIST as CuratedToken[]).push({ ...usdc, symbol: 'FAKE' });
+    }).toThrow(TypeError);
+    expect(() => {
+      (usdc.tags as TokenTag[]).push('native');
+    }).toThrow(TypeError);
+    expect(usdc.decimals).toBe(6);
+    expect(knownDecimals('evm:1', usdc.address)).toBe(6);
+  });
+});
+
+describe('cbBTC (owner decision: issuer-controlled core asset)', () => {
+  it('is listed on Ethereum, Base and Arbitrum One at one address with 8 decimals', () => {
+    for (const key of LISTED_CHAINS) {
+      expect(
+        listTokens(key).find((t) => t.symbol === 'cbBTC'),
+        key,
+      ).toMatchObject({
+        address: '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf',
+        name: 'Coinbase Wrapped BTC',
+        decimals: 8,
+      });
+      expect(knownDecimals(key, '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf')).toBe(8);
+    }
+  });
+});
+
+describe('bridge links', () => {
+  it('declare lowercase L1 addresses that are listed on Ethereum, and known gateways', () => {
+    const l1 = new Set(listTokens('evm:1').map((t) => t.address));
+    const bridged = TOKEN_LIST.filter((t) => t.bridge);
+    expect(bridged.length).toBeGreaterThan(0);
+    for (const t of bridged) {
+      const b = t.bridge;
+      if (!b) continue;
+      expect(l1.has(b.l1Address), `${t.chain} ${t.symbol}`).toBe(true);
+      expect(b.kind).toBe(t.chain === 'evm:8453' ? 'op-stack' : 'arbitrum');
+      expect([OP_STANDARD_BRIDGE, ARB_STANDARD_GATEWAY, ARB_WETH_GATEWAY]).toContain(b.gateway);
+    }
+  });
+});
+
 describe('decimals are one trusted source (ADR 0004, ADR 0006)', () => {
   it('derives the registry knownDecimals of each listed chain from the token list', () => {
     for (const key of LISTED_CHAINS) {
@@ -100,13 +189,14 @@ describe('decimals are one trusted source (ADR 0004, ADR 0006)', () => {
 });
 
 describe('listTokens', () => {
-  it('orders natives, then stablecoins, then the rest, each by symbol', () => {
+  it('orders natives, then stablecoins, then the rest, each by case-insensitive symbol', () => {
     expect(listTokens('evm:1').map((t) => t.symbol)).toEqual([
       'ETH',
       'DAI',
       'USDC',
       'USDT',
       'AAVE',
+      'cbBTC',
       'LINK',
       'UNI',
       'WBTC',
@@ -118,6 +208,7 @@ describe('listTokens', () => {
       'USDC',
       'USDT0',
       'ARB',
+      'cbBTC',
       'LINK',
       'UNI',
       'WBTC',
@@ -149,7 +240,7 @@ describe('searchTokens', () => {
 
   it('matches names case-insensitively from the minimum length', () => {
     expect(MIN_NAME_QUERY_LENGTH).toBe(2);
-    expect(symbols('evm:1', 'wrapped')).toEqual(['WBTC', 'WETH']);
+    expect(symbols('evm:1', 'wrapped')).toEqual(['cbBTC', 'WBTC', 'WETH']);
     expect(symbols('evm:1', 'CHAINlink')).toEqual(['LINK']);
     // One character matches symbols only: "o" is in several names but in no symbol.
     expect(symbols('evm:1', 'o')).toEqual([]);

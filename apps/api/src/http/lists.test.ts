@@ -44,7 +44,8 @@ describe('GET /v1/chains', () => {
   it('lists the served registry chains with public fields only', async () => {
     const res = await get('/v1/chains', routing);
     expect(res.statusCode).toBe(200);
-    expect(res.headers['cache-control']).toBe(LIST_CACHE_CONTROL);
+    expect(LIST_CACHE_CONTROL).toBe('private, max-age=300');
+    expect(res.headers['cache-control']).toBe('private, max-age=300');
     expect(res.json()).toEqual([
       {
         key: 'evm:1',
@@ -135,6 +136,7 @@ describe('GET /v1/tokens', () => {
   it('searches symbols and names case-insensitively', async () => {
     expect((await tokens('/v1/tokens?chain=evm:1&q=uSdC')).map((t) => t.symbol)).toEqual(['USDC']);
     expect((await tokens('/v1/tokens?chain=evm:1&q=WRAPPED')).map((t) => t.symbol)).toEqual([
+      'cbBTC',
       'WBTC',
       'WETH',
     ]);
