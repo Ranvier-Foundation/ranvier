@@ -12,7 +12,9 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "guard:tokens": "pnpm --filter @ranvier/web guard:tokens",
+    "e2e": "pnpm --filter @ranvier/web build && pnpm --filter @ranvier/web e2e"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
