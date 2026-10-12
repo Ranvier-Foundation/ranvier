@@ -26,6 +26,10 @@ const envSchema = z.object({
 
 export type Config = z.infer<typeof envSchema>;
 
+/** An empty value (`KEY=` copied from .env.example) means "not set", not an invalid value. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return envSchema.parse(env);
+  const set = Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''),
+  );
+  return envSchema.parse(set);
 }
