@@ -19,3 +19,4 @@ next-env.d.ts
 docs/private/
 apps/web/test-results
 apps/web/playwright-report
+.screenshots

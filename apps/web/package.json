@@ -12,7 +12,8 @@
     "test": "vitest run",
     "guard:tokens": "node scripts/token-guard.ts",
     "start:test": "next start --port 3100",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
     "@ranvier/fees": "workspace:*",

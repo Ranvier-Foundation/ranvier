@@ -471,3 +471,40 @@ test.describe('header collapse below 1200px', () => {
     expect([c.width, c.height]).toEqual([264, 56]);
   });
 });
+
+test.describe('header alignment at every width', () => {
+  for (const [width, height] of [
+    [1440, 900],
+    [1200, 800],
+    [1199, 800],
+    [768, 1024],
+    [390, 844],
+  ] as const) {
+    test(`right group ends 20px from the right edge at ${width}`, async ({ page }) => {
+      await gotoSwap(page, width, height);
+      const h = header(page);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBeLessThanOrEqual(0);
+
+      const logo = await box(h.getByRole('link', { name: 'Ranvier home' }));
+      expect(Math.abs(logo.x - 20)).toBeLessThanOrEqual(1);
+
+      // The last control in the header (More) closes the right group.
+      const more = await box(h.getByRole('button', { name: 'More' }));
+      expect(Math.abs(more.x + more.width - (width - 20))).toBeLessThanOrEqual(1);
+
+      const nav = h.getByRole('navigation', { name: 'Main' });
+      if (await nav.isVisible()) {
+        const n = await box(nav);
+        // Centring is only possible when the right group fits in the equal side column
+        // (below that the side columns grow to their content, see grid-cols-header).
+        const room = (width - n.width) / 2 - 20 - 20;
+        const groupWidth = more.x + more.width - (await box(h.getByRole('button').first())).x;
+        if (groupWidth <= room) {
+          expect(Math.abs(n.x + n.width / 2 - width / 2)).toBeLessThanOrEqual(1);
+        }
+      }
+    });
+  }
+});
