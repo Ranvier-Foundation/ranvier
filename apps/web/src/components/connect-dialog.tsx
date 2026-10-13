@@ -165,6 +165,23 @@ function ConnectDialog({ onClose }: { onClose: () => void }) {
         e.preventDefault();
         onClose();
       }}
+      onKeyDown={(e) => {
+        // Keep Tab inside the dialog: wrap from the last control to the first and back.
+        if (e.key !== 'Tab') return;
+        const items = Array.from(
+          e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]'),
+        );
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first || !last) return;
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }}
       onClick={(e) => {
         // A click on the scrim (the dialog element itself or its padding frame) closes.
         if (e.target === e.currentTarget || (e.target as HTMLElement).dataset.scrim === 'true') {
