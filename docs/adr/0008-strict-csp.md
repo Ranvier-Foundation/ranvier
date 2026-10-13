@@ -33,10 +33,10 @@ Measured before deciding, on a production build in Chromium:
 - The root layout calls `await connection()`, so every route renders per request and receives the nonce. Static prerendering, ISR and Partial Prerendering are given up for HTML. Static assets are unchanged (`/_next/static/*`, `immutable`).
 - Measured cost on loopback for `/`:
 
-  | Build               | p50, sequential  | Throughput at 20 concurrent |
-  | ------------------- | ---------------- | --------------------------- |
-  | Before (static)     | 4.7 to 5.3 ms    | about 865 req/s             |
-  | After (per request) | figure in the PR | figure in the PR            |
+  | Build               | p50, sequential | Throughput at 20 concurrent       |
+  | ------------------- | --------------- | --------------------------------- |
+  | Before (static)     | 4.7 to 5.3 ms   | about 865 req/s (p50 20 to 22 ms) |
+  | After (per request) | 7.2 to 9.7 ms   | about 230 req/s (p50 85 to 87 ms) |
 
   This is acceptable for this app. HTML for a wallet app should not be cached at the edge anyway: a cached page would reuse a nonce.
 
