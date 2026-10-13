@@ -272,10 +272,14 @@ test.describe('connect flow', () => {
     page,
   }) => {
     await gotoSwap(page, 1440, 900);
-    await connectButton(page).focus();
-    await page.keyboard.press('Enter');
     const d = dialog(page);
-    await expect(d).toBeVisible();
+    // Enter before hydration does nothing (no handler yet); under parallel load that race showed
+    // up about once in 300 runs, on main too. Retry until the dialog opens.
+    await expect(async () => {
+      await connectButton(page).focus();
+      await page.keyboard.press('Enter');
+      await expect(d).toBeVisible({ timeout: 1000 });
+    }).toPass();
     const inside = () =>
       page.evaluate(
         () => document.querySelector('dialog')?.contains(document.activeElement) ?? false,
