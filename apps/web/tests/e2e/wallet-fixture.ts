@@ -50,7 +50,8 @@ export function walletCalls(page: Page): readonly string[] {
 /**
  * The only methods this change may send to a wallet: connect, read the account and chain, revoke
  * permissions on disconnect, and switch or add a network. Anything else (signing, sending,
- * reading the chain through the wallet) fails the test.
+ * reading the chain through the wallet, or any legacy `send`, `sendAsync` or `enable` call, which
+ * are recorded with a `legacy:` prefix) fails the test.
  */
 export const ALLOWED_WALLET_METHODS: ReadonlySet<string> = new Set([
   'eth_accounts',
@@ -62,12 +63,36 @@ export const ALLOWED_WALLET_METHODS: ReadonlySet<string> = new Set([
   'wallet_addEthereumChain',
 ]);
 
-export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DEFAULT_WALLET]) {
+/**
+ * Calls the wallet received that are not on the allowlist. Waits a moment first: the page reports
+ * each call through an asynchronous binding, so the last one may still be in flight.
+ */
+export async function unexpectedWalletCalls(page: Page): Promise<string[]> {
+  try {
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  } catch {
+    /* page already closed: use what was recorded */
+  }
+  return walletCalls(page).filter((m) => !ALLOWED_WALLET_METHODS.has(m));
+}
+
+/** Clears the log (only for the negative test that proves the allowlist check works). */
+export function forgetWalletCalls(page: Page): void {
+  recorded.get(page)?.splice(0);
+}
+
+/** Records calls from every fake provider on this page; safe to call more than once. */
+async function trackCalls(page: Page): Promise<void> {
+  if (recorded.has(page)) return;
   const log: string[] = [];
   recorded.set(page, log);
   await page.exposeFunction('__recordCall', (method: string) => {
     log.push(method);
   });
+}
+
+export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DEFAULT_WALLET]) {
+  await trackCalls(page);
   await page.addInitScript(
     ({ wallets, accountA, known }) => {
       const w = window as unknown as Record<string, unknown>;
@@ -94,11 +119,15 @@ export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DE
         (listeners[event] ?? []).slice().forEach((fn) => fn(...args));
       w.__emit = emit;
       const err = (code: number, message: string) => Object.assign(new Error(message), { code });
+      const report = (method: string) => {
+        ctl.calls.push(method);
+        (w.__recordCall as ((m: string) => void) | undefined)?.(method);
+      };
+      w.__fakeProvider = () => provider;
       const authorised = () => store('fake.auth') === '1';
       const provider = {
         async request({ method, params }: { method: string; params?: unknown[] }) {
-          ctl.calls.push(method);
-          (w.__recordCall as ((m: string) => void) | undefined)?.(method);
+          report(method);
           switch (method) {
             case 'eth_requestAccounts':
               if (ctl.connect === 'reject') throw err(4001, 'User rejected the request.');
@@ -128,6 +157,20 @@ export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DE
             default:
               throw err(4200, `Unsupported method ${method}`);
           }
+        },
+        // Legacy entry points: never used by this app. Recorded with a `legacy:` prefix so any
+        // call shows up as unexpected.
+        send(method: unknown) {
+          report(`legacy:send:${typeof method === 'string' ? method : 'payload'}`);
+          return Promise.reject(err(4200, 'send is not supported'));
+        },
+        sendAsync(payload: { method?: string }, cb?: (e: Error) => void) {
+          report(`legacy:sendAsync:${payload?.method ?? 'payload'}`);
+          cb?.(err(4200, 'sendAsync is not supported'));
+        },
+        enable() {
+          report('legacy:enable');
+          return Promise.reject(err(4200, 'enable is not supported'));
         },
         on(event: string, fn: (...a: unknown[]) => void) {
           (listeners[event] ??= []).push(fn);
@@ -177,15 +220,29 @@ export async function fake<T>(
  * checks one read and uses another would render the second.
  */
 export async function installHostileAnnouncements(page: Page) {
+  await trackCalls(page);
   await page.addInitScript(
     ({ png }) => {
       const flip = (first: string, later: string) => {
         let n = 0;
         return { length: 10, toString: () => (n++ === 0 ? first : later), valueOf: () => later };
       };
+      const report = (method: string) =>
+        (window as unknown as { __recordCall?: (m: string) => void }).__recordCall?.(method);
+      const refuse = () => Object.assign(new Error('no'), { code: 4200 });
       const provider = {
-        request: async () => {
-          throw Object.assign(new Error('no'), { code: 4200 });
+        request: async ({ method }: { method: string }) => {
+          report(method);
+          throw refuse();
+        },
+        send: (method: string) => {
+          report(`legacy:send:${method}`);
+          return Promise.reject(refuse());
+        },
+        sendAsync: (payload: { method?: string }) => report(`legacy:sendAsync:${payload?.method}`),
+        enable: () => {
+          report('legacy:enable');
+          return Promise.reject(refuse());
         },
         on() {},
         removeListener() {},

@@ -19,6 +19,7 @@ import {
   MAX_WALLETS,
   listWallets,
   safeIcon,
+  nameSkeleton,
   safeName,
   type ConnectorLike,
 } from '../../src/lib/wallet/wallets';
@@ -262,6 +263,124 @@ describe('look-alike names', () => {
     // First wins: the second 'x.y' (different case) is the same rdns and is ignored.
     expect(list.filter((w) => w.key === 'x.y')).toHaveLength(1);
     expect(list.find((w) => w.key === 'x.y')?.connector.uid).toBe('2');
+  });
+});
+
+describe('cap in announcement order', () => {
+  const c = (id: string, name: string, uid: string): ConnectorLike => ({
+    id,
+    name,
+    icon: PNG,
+    uid,
+    type: 'injected',
+  });
+
+  it('keeps the first wallets announced, however the later ones sort', () => {
+    const real = c('io.metamask', 'MetaMask', 'real');
+    const fakes = Array.from({ length: 8 }, (_, i) => c(`fake.w${i}`, `Aaa ${i}`, `f${i}`));
+    const list = listWallets([real, ...fakes]);
+    expect(list).toHaveLength(MAX_WALLETS);
+    expect(list.map((w) => w.key)).toContain('io.metamask');
+    // The eighth fake was announced ninth and is not shown.
+    expect(list.map((w) => w.key)).not.toContain('fake.w7');
+    // Display is still sorted by name.
+    expect(list.map((w) => w.name)).toEqual([...list.map((w) => w.name)].sort());
+  });
+
+  it('same-name fakes whose rdns sort earlier cannot displace the real wallet', () => {
+    const real = c('io.metamask', 'MetaMask', 'real');
+    const fakes = Array.from({ length: 8 }, (_, i) => c(`a.fake${i}`, 'MetaMask', `f${i}`));
+    const list = listWallets([real, ...fakes]);
+    expect(list).toHaveLength(MAX_WALLETS);
+    expect(list.map((w) => w.key)).toContain('io.metamask');
+    // Every shown row has the same name, so every row shows its rdns.
+    expect(list.every((w) => w.hint !== undefined)).toBe(true);
+  });
+
+  it('invalid and duplicate announcements do not use up the cap', () => {
+    const junk = [
+      c('not valid', 'Bad', 'j1'),
+      c('dup.one', 'One', 'j2'),
+      c('dup.one', 'One again', 'j3'),
+      c('x.blank', 'ㅤ', 'j4'),
+    ];
+    const good = Array.from({ length: 8 }, (_, i) => c(`good.w${i}`, `Good ${i}`, `g${i}`));
+    const list = listWallets([...junk, ...good]);
+    expect(list).toHaveLength(MAX_WALLETS);
+    // 'dup.one' (the first of its rdns) takes one slot; the eighth good wallet is the ninth valid.
+    expect(list.map((w) => w.key)).toContain('good.w6');
+    expect(list.map((w) => w.key)).not.toContain('good.w7');
+    expect(list.map((w) => w.name)).not.toContain('One again');
+  });
+});
+
+describe('look-alike names, invisible characters and skeletons', () => {
+  const c = (id: string, name: string): ConnectorLike => ({
+    id,
+    name,
+    icon: PNG,
+    uid: id,
+    type: 'injected',
+  });
+  const hinted = (names: string[]) =>
+    listWallets(names.map((n, i) => c(`w.n${i}`, n))).map((w) => w.hint !== undefined);
+
+  it.each([
+    ['U+034F combining grapheme joiner', '͏'],
+    ['U+180B Mongolian free variation selector', '᠋'],
+    ['U+2800 Braille blank', '⠀'],
+    ['U+115A Hangul jamo', 'ᅚ'],
+    ['U+E000 private use', ''],
+    ['U+200D zero-width joiner', '‍'],
+    ['U+3164 Hangul filler', 'ㅤ'],
+    ['U+FE0F variation selector', '️'],
+  ])('MetaMask next to MetaMask plus %s gets a hint on both rows', (_label, ch) => {
+    expect(safeName(`MetaMask${ch}`)).toBe('MetaMask');
+    expect(hinted(['MetaMask', `MetaMask${ch}`])).toEqual([true, true]);
+  });
+
+  it('names whose skeletons collide all show their rdns', () => {
+    expect(nameSkeleton('Meta Mask.')).toBe('metamask');
+    expect(nameSkeleton('META-MASK')).toBe('metamask');
+    expect(nameSkeleton('ＭｅｔａＭａｓｋ')).toBe('metamask');
+    expect(hinted(['MetaMask', 'Meta Mask', 'MetaMask.', 'META_MASK', 'Other'])).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it('keeps Korean syllables and other real text intact', () => {
+    expect(safeName('한국어 지갑')).toBe('한국어 지갑');
+    expect(safeName('Éclair 2')).toBe('Éclair 2');
+    expect(safeName('éclair')).toBe('éclair');
+  });
+});
+
+describe('truncation and combining marks', () => {
+  const MARK = '́';
+  it('cannot leave bare marks after truncation: the check runs on the final text', () => {
+    expect(safeName(`${MARK.repeat(45)}Z`)).toBe('Z');
+    expect(safeName(`${'-'.repeat(45)}Z`)).toBe('');
+    expect(safeName(`${' '.repeat(5)}${MARK.repeat(5)}`)).toBe('');
+  });
+  it('caps runs of combining marks and drops marks that follow a space', () => {
+    expect(Array.from(safeName(`A${MARK.repeat(30)}`))).toHaveLength(4);
+    expect(safeName(`A ${MARK}${MARK}B`)).toBe('A B');
+    const zalgo = safeName(`W${'̀́̂̃̄'.repeat(8)}allet`);
+    // NFKC composes the first mark into the W; three more marks are kept (3 in a row after it).
+    expect(zalgo.normalize('NFD').match(/\p{M}/gu)?.length).toBe(4);
+    expect(zalgo.match(/\p{M}/gu)?.length).toBe(3);
+    expect(zalgo.endsWith('allet')).toBe(true);
+  });
+  it('the final name is at most 40 characters and has a letter or digit', () => {
+    for (const n of ['x'.repeat(100), `${MARK.repeat(41)}${'y'.repeat(60)}`, '9'.repeat(50)]) {
+      const out = safeName(n);
+      expect(Array.from(out).length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
+      expect(out).toMatch(/[\p{L}\p{N}]/u);
+    }
   });
 });
 

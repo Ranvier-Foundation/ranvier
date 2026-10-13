@@ -11,7 +11,8 @@ import {
   installHostileAnnouncements,
   installWallets,
   walletCalls,
-  ALLOWED_WALLET_METHODS,
+  forgetWalletCalls,
+  unexpectedWalletCalls,
   type FakeWalletSpec,
 } from './wallet-fixture';
 
@@ -71,10 +72,10 @@ test.beforeEach(({ page, baseURL }) => {
   });
   page.on('pageerror', (e) => list.push(`page error: ${e.message}`));
 });
-test.afterEach(({ page }) => {
+test.afterEach(async ({ page }) => {
   expect(problems.get(page)).toEqual([]);
   // Allowlist, for every test and across reloads: nothing but connection and network methods.
-  expect(walletCalls(page).filter((m) => !ALLOWED_WALLET_METHODS.has(m))).toEqual([]);
+  expect(await unexpectedWalletCalls(page)).toEqual([]);
 });
 
 test.describe('connect dialog without a wallet', () => {
@@ -368,6 +369,44 @@ test.describe('untrusted wallet announcements', () => {
   });
 });
 
+test.describe('the wallet-call allowlist check itself', () => {
+  test('catches signing and legacy calls, including the last one', async ({ page }) => {
+    await installWallets(page);
+    await gotoSwap(page, 1440, 900);
+    expect(await unexpectedWalletCalls(page)).toEqual([]);
+    // A test-only script sends what the app must never send.
+    await page.evaluate(() => {
+      const provider = (
+        window as unknown as { __fakeProvider: () => Record<string, (...a: unknown[]) => unknown> }
+      ).__fakeProvider();
+      void (provider.request as (a: unknown) => Promise<unknown>)({
+        method: 'eth_sendTransaction',
+      }).catch(() => {});
+      void (provider.request as (a: unknown) => Promise<unknown>)({
+        method: 'personal_sign',
+      }).catch(() => {});
+      void (provider.send as (m: string) => Promise<unknown>)('eth_signTypedData_v4').catch(
+        () => {},
+      );
+      provider.sendAsync?.({ method: 'eth_sign' });
+      void (provider.enable as () => Promise<unknown>)().catch(() => {});
+    });
+    const caught = await unexpectedWalletCalls(page);
+    expect(caught.sort()).toEqual(
+      [
+        'eth_sendTransaction',
+        'personal_sign',
+        'legacy:send:eth_signTypedData_v4',
+        'legacy:sendAsync:eth_sign',
+        'legacy:enable',
+      ].sort(),
+    );
+    // Allowed methods are not flagged, and the log is cleared so the suite-wide check passes.
+    forgetWalletCalls(page);
+    expect(await unexpectedWalletCalls(page)).toEqual([]);
+  });
+});
+
 test.describe('hostile announcements', () => {
   test('objects that change between reads never reach an img src or a request', async ({
     page,
@@ -409,6 +448,63 @@ test.describe('look-alike wallets', () => {
     await expect(d.getByRole('button', { name: /Impostor/ })).not.toContainText('io.metamask');
     await page.screenshot({ path: test.info().outputPath('lookalike-1440.png') });
     expect((await scan(page)).violations).toEqual([]);
+  });
+});
+
+test.describe('the cap keeps the first wallets announced', () => {
+  test('8 earlier-sorting fakes announced after the real wallet do not push it out', async ({
+    page,
+  }) => {
+    await installWallets(page, [
+      { name: 'MetaMask', rdns: 'io.metamask', icon: ICON_PNG },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: `Aaa ${i}`,
+        rdns: `fake.w${i}`,
+        icon: ICON_PNG,
+      })),
+    ]);
+    await gotoSwap(page, 1440, 900);
+    await connectButton(page).click();
+    const d = dialog(page);
+    await expect(d.getByRole('button', { name: /^MetaMask/ })).toBeVisible();
+    await expect(d.getByRole('button', { name: /Aaa 6/ })).toBeVisible();
+    await expect(d.getByRole('button', { name: /Aaa 7/ })).toHaveCount(0);
+    await expect(d.locator('ul').first().getByRole('button')).toHaveCount(9); // 8 plus Phone wallet
+  });
+
+  test('8 same-name fakes with earlier-sorting rdns: the real rdns is still listed', async ({
+    page,
+  }) => {
+    await installWallets(page, [
+      { name: 'MetaMask', rdns: 'io.metamask', icon: ICON_PNG },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: 'MetaMask',
+        rdns: `a.fake${i}`,
+        icon: ICON_PNG,
+      })),
+    ]);
+    await gotoSwap(page, 1440, 900);
+    await connectButton(page).click();
+    const d = dialog(page);
+    await expect(d.getByRole('button', { name: /MetaMask.*io\.metamask(?!\.)/ })).toBeVisible();
+    await expect(d.getByRole('button', { name: /a\.fake6/ })).toBeVisible();
+    await expect(d.getByRole('button', { name: /a\.fake7/ })).toHaveCount(0);
+  });
+
+  test('an invisible-character twin of a name still gets the rdns hint', async ({ page }) => {
+    await installWallets(page, [
+      { name: 'MetaMask', rdns: 'io.metamask', icon: ICON_PNG },
+      { name: 'MetaMask\u2800', rdns: 'fake.braille', icon: ICON_PNG },
+      { name: 'Meta Mask.', rdns: 'fake.spaced', icon: ICON_PNG },
+    ]);
+    await gotoSwap(page, 1440, 900);
+    await connectButton(page).click();
+    const d = dialog(page);
+    for (const rdns of ['io.metamask', 'fake.braille', 'fake.spaced']) {
+      await expect(
+        d.getByRole('button', { name: new RegExp(`${rdns.replace('.', '\\.')}`) }),
+      ).toBeVisible();
+    }
   });
 });
 
