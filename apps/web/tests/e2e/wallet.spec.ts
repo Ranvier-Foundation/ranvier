@@ -8,7 +8,10 @@ import {
   DEFAULT_WALLET,
   ICON_PNG,
   fake,
+  installHostileAnnouncements,
   installWallets,
+  walletCalls,
+  ALLOWED_WALLET_METHODS,
   type FakeWalletSpec,
 } from './wallet-fixture';
 
@@ -70,6 +73,8 @@ test.beforeEach(({ page, baseURL }) => {
 });
 test.afterEach(({ page }) => {
   expect(problems.get(page)).toEqual([]);
+  // Allowlist, for every test and across reloads: nothing but connection and network methods.
+  expect(walletCalls(page).filter((m) => !ALLOWED_WALLET_METHODS.has(m))).toEqual([]);
 });
 
 test.describe('connect dialog without a wallet', () => {
@@ -123,8 +128,8 @@ test.describe('connect flow', () => {
       page.getByRole('main').getByRole('button', { name: 'Connect wallet' }),
     ).toHaveCount(0);
     // The page never asked for a signature or a transaction, nor read chain data itself.
-    const calls = await fake(page, (w) => w.__fake.calls);
-    expect(calls.filter((c) => /sign|sendTransaction|eth_call|getBalance/i.test(c))).toEqual([]);
+    // The allowlist itself is enforced in afterEach; here: the log really records the connect.
+    expect(walletCalls(page)).toContain('eth_requestAccounts');
   });
 
   test('the swap CTA opens the same dialog and focus returns to it', async ({ page }) => {
@@ -359,6 +364,50 @@ test.describe('untrusted wallet announcements', () => {
     expect(html).not.toMatch(/evil\.example|javascript:/);
     expect(html).toContain(`Aaa${'x'.repeat(37)}<`);
     expect(html).not.toContain('x'.repeat(38));
+    expect((await scan(page)).violations).toEqual([]);
+  });
+});
+
+test.describe('hostile announcements', () => {
+  test('objects that change between reads never reach an img src or a request', async ({
+    page,
+  }) => {
+    await installHostileAnnouncements(page);
+    await gotoSwap(page, 1440, 900);
+    await connectButton(page).click();
+    const d = dialog(page);
+    await expect(d.getByRole('button', { name: /Plain Good/ })).toBeVisible();
+    const srcs = await page
+      .locator('img')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('src') ?? ''));
+    expect(srcs.length).toBeGreaterThan(0);
+    expect(srcs.every((s) => s.startsWith('data:image/png;base64,'))).toBe(true);
+    // Whatever was listed, no row text or attribute carries the attacker's URL.
+    expect(await d.innerHTML()).not.toMatch(/evil\.example|evil\.rdns/);
+    // Allow any pending image load to start before the afterEach checks for off-origin requests.
+    await page.waitForTimeout(300);
+    expect((await scan(page)).violations).toEqual([]);
+  });
+});
+
+test.describe('look-alike wallets', () => {
+  test('same-named wallets show their rdns, unique names do not', async ({ page }) => {
+    await installWallets(page, [
+      { name: 'Impostor', rdns: 'io.metamask', icon: ICON_PNG },
+      { name: 'MetaMask', rdns: 'io.metamask.fake', icon: ICON_PNG },
+      { name: 'metamask', rdns: 'io.metamask.other', icon: ICON_PNG },
+      { name: 'Solo Wallet', rdns: 'solo.wallet', icon: ICON_PNG },
+    ]);
+    await gotoSwap(page, 1440, 900);
+    await connectButton(page).click();
+    const d = dialog(page);
+    await expect(d.getByRole('button', { name: /MetaMask.*io\.metamask\.fake/ })).toBeVisible();
+    await expect(d.getByRole('button', { name: /metamask.*io\.metamask\.other/ })).toBeVisible();
+    const solo = d.getByRole('button', { name: /Solo Wallet/ });
+    await expect(solo).toBeVisible();
+    await expect(solo).not.toContainText('solo.wallet');
+    await expect(d.getByRole('button', { name: /Impostor/ })).not.toContainText('io.metamask');
+    await page.screenshot({ path: test.info().outputPath('lookalike-1440.png') });
     expect((await scan(page)).violations).toEqual([]);
   });
 });

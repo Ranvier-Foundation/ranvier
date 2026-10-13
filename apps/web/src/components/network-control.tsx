@@ -33,7 +33,9 @@ function NetworkChoices({
   const { switchChainAsync } = useSwitchChain();
   const [state, setState] = useState<SwitchState>({ kind: 'idle' });
   const busy = state.kind === 'switching';
-  const fallback = defaultNetwork();
+  // The first EVM chain: the registry's first chain may not be EVM, and a button that switches
+  // to a chain the wallet cannot use would do nothing.
+  const fallback = EVM_CHAINS[0];
 
   async function switchTo(chain: ChainConfig) {
     const chainId = evmChainId(chain);
@@ -55,7 +57,7 @@ function NetworkChoices({
           {t('header.network.menu.heading')}
         </p>
       ) : null}
-      {active ? null : (
+      {active || !fallback ? null : (
         <div className="mb-6 flex flex-col gap-8 bg-warning-tint p-12 text-warning-text">
           <p className="m-0 text-caption leading-body">{t('header.network.unsupported.body')}</p>
           <button

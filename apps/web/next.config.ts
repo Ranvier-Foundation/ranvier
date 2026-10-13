@@ -37,8 +37,11 @@ export function apiOrigin(apiUrl: string | undefined, nodeEnv?: string): string 
   return url.origin;
 }
 
-// Spec section 9: frontend hijack protection. The CSP moves to per-request nonces
-// once wallet SDKs are added; until then it is strict and static.
+// Spec section 9: frontend hijack protection. This CSP is static and NOT yet strict:
+// `script-src` still has 'unsafe-inline' (Next inlines its bootstrap scripts). Wallet code is now
+// in the app (wagmi, ADR 0007), so any script injection can reach wallet requests. A strict
+// policy (per-request nonces with 'strict-dynamic', and SRI) is required BEFORE any signing or
+// transaction flow ships; it is tracked as its own change, not done here.
 export function securityHeaders(
   apiUrl: string | undefined,
   nodeEnv?: string,

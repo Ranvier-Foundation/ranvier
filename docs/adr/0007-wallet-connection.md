@@ -16,10 +16,10 @@ Two things shape the choice:
 
 ### wagmi, viem and EIP-6963 discovery
 
-- `wagmi` 3.7.7, `viem` 2.57.4 (the version `apps/api` already pins) and `@tanstack/react-query` 5.103.3 (wagmi's peer), all pinned exactly. wagmi was chosen because the spec stack names it and it handles the awkward parts (reconnect on load, chain and account change events, error normalisation) that we would otherwise write and get subtly wrong.
+- `wagmi` 3.7.7, `viem` 2.56.9 and `@tanstack/react-query` 5.103.3 (wagmi's peer), all pinned exactly. wagmi was chosen because the spec stack names it and it handles the awkward parts (reconnect on load, chain and account change events, error normalisation) that we would otherwise write and get subtly wrong.
 - Wallets are found through **EIP-6963** (wagmi's built-in discovery, via `mipd`): each browser wallet announces itself with a name, icon and reverse-DNS id, and the dialog lists what was announced. No wallet brand logos or names are in our code. No connector is configured by hand, and the optional heavy connectors in `@wagmi/connectors` (Coinbase, MetaMask SDK, Safe, WalletConnect, Base Account) are not installed.
 - New transitive packages: `@wagmi/core`, `@wagmi/connectors` (no runtime dependencies of its own; every SDK it can use is an optional peer and not installed), `@tanstack/query-core`, `mipd`, `zustand` and `use-sync-external-store`. None has an install script, and `allowBuilds` still lists only `esbuild`.
-- Dependency ages at the time of this change: wagmi, `@wagmi/core` and `@wagmi/connectors` 47 days; react-query and query-core 17 days; `viem` 2.57.4 is 5 days old because it is the version `apps/api` already runs and the two must stay one version (owner decision).
+- Dependency ages on 2026-10-13: wagmi, `@wagmi/core` and `@wagmi/connectors` 47 days; react-query and query-core 17 days; `viem` 2.56.9 (published 2026-09-24) 19 days and its `ox` 0.14.45 (2026-09-17) 26 days; `mipd`, `zustand` and `use-sync-external-store` over a year. No new package is younger than 14 days. `viem` is deliberately one patch behind `apps/api` (2.57.4, 5 days old, `ox` 0.14.54), which will move down to 2.56.9 in a separate chore so the two match again.
 
 ### WalletConnect is not included
 
@@ -37,19 +37,30 @@ Unchanged. `img-src 'self' data:` already allows the `data:` icons wallets annou
 
 wagmi's default storage, `localStorage`, keys prefixed `wagmi.`: `wagmi.store` (the connection preference: connector id, name and uid, the connected account addresses and chain id), `wagmi.recentConnectorId`, and `<wallet>.disconnected` flags so that a deliberate disconnect survives a reload. Nothing else; no key material, no signatures. Addresses are stored because wagmi needs them to restore the connection; they stay in the person's own browser and are never sent anywhere or logged. `ssr: true` keeps the server render and the first client render identical (signed out); the saved connection is restored after hydration, so no address is in server-rendered HTML.
 
-### Trust model for provider-supplied strings
+### Trust model for provider-supplied values
 
-Wallet name, rdns, uuid and icon are untrusted (`apps/web/src/lib/wallet/wallets.ts`):
+Wallet name, rdns, uuid and icon are untrusted (`apps/web/src/lib/wallet/wallets.ts`). They come from a page script and may be any JavaScript value, not only strings (objects with a `toString` that changes between calls, getters, Proxies):
 
-- Only connectors of type `injected` whose id is a valid reverse-DNS name are listed; the rest are ignored. Duplicates (same rdns, case-insensitive, or same uid) are dropped, the list is capped at 8 and sorted by name, so announcing first or flooding gives no advantage.
-- Names lose control, zero-width and bidirectional-override characters, are whitespace-collapsed and cut to 40 characters. They are rendered as text by React, never as HTML.
+- Each field is read once, must be a primitive `string` (checked with `typeof`) before any other use, and only that checked primitive is used afterwards. Nothing calls a method on a provider-supplied object. Anything that is not a string drops the field (icon) or the wallet (id, name, uid, type).
+- Only connectors of type `injected` whose id is a valid reverse-DNS name are listed. The list is capped at 8 and sorted by name.
+- **First announcement wins, and that is a limit, not a defence.** A real extension injects at document start, so it announces before page scripts and normally holds its rdns. mipd keeps the first announcement per announcement uuid, and wagmi skips a provider whose rdns is already taken (we also ignore a repeated rdns, case-insensitively). A script that announces first can take any rdns, for example an impostor under `io.metamask`; and a second wallet called "MetaMask" under another rdns is a different wallet as far as the protocol is concerned. We do not claim that announcing first or flooding gives no advantage. The mitigation is display: when two listed wallets share a name (NFKC-normalised, case-folded), each of those rows shows its rdns as text under the name, so look-alikes can be told apart. Homoglyphs that NFKC does not fold (a Cyrillic "a") are not caught. (wagmi gives every connector its own `uid`, so our uid check is only a second line behind the rdns check.) The user's wallet extension still asks them to approve the site, and the dialog never requests a signature.
+- Names are NFKC-normalised, control characters and line or paragraph separators become spaces, format characters (zero-width, bidirectional controls, soft hyphen, word joiner), Hangul fillers, variation selectors and tag characters are removed, whitespace is collapsed and the name is cut to 40 characters. A name without a letter or digit after that (for example only U+3164) drops the wallet. Names are rendered as text by React, never as HTML.
 - Icons must match `data:image/(png|svg+xml|webp);base64,<base64>` and be at most 64 KiB of text. They are only ever the `src` of an `<img>` (which does not run scripts in SVG), never inline SVG and never `dangerouslySetInnerHTML`. Anything else shows the wallet's first letter.
 - Error text from a wallet is never shown. Only the error kind is read (user rejected, request pending, other) and our own message is displayed.
-- A page script can announce a fake wallet. The dialog only lists wallets; connecting is a user action on a specific wallet, and the app never requests a signature or transaction in this change. The names shown are what the wallet claims, as in every EIP-6963 dapp; the user's own wallet extension asks them to approve the site.
+- The unit tests cover objects with changing `toString`, `valueOf` and `Symbol.toPrimitive`, getters that change between reads, and Proxies; an end-to-end test announces such wallets and asserts that every `<img>` is a `data:` image and no request leaves the origin.
+
+What the tests enforce about requests to the wallet: for every end-to-end test, every JSON-RPC method the page sent to the fake wallet (recorded across reloads) must be one of `eth_accounts`, `eth_chainId`, `eth_requestAccounts`, `wallet_requestPermissions`, `wallet_revokePermissions`, `wallet_switchEthereumChain` or `wallet_addEthereumChain`. This is an allowlist. It checks our code against a fake wallet; it does not stop another script in the page from calling a real wallet.
 
 ### Wallet avatar
 
 Four quadrants, each one of `primary`, `blush`, `accent` or `deep-tile`, chosen by folding the 20 address bytes into four accumulators. Only token names leave the function; a flat single-colour disc is avoided. See `docs/ui-guidelines.md`.
+
+### Residual risks
+
+- **`script-src 'unsafe-inline'` remains in the CSP** (pre-existing; Next inlines its bootstrap scripts). Wallet code now lives in the app, so a script injection can reach wallet requests. The fix is a strict CSP with per-request nonces, `'strict-dynamic'` and SRI (spec section 9). It is not part of this change and **must land before any signing or transaction flow**.
+- **An announcement flood slows the tab (availability only).** mipd's store is unbounded, and wagmi runs its setup for every stored provider on every announcement, which is quadratic: the security review measured 800 announcements at about 3.7 s of main-thread time. Exploiting it needs a hostile script or extension already running in the page, and gains nothing but a slow page. Accepted. Bounding it would mean `multiInjectedProviderDiscovery: false` plus our own capped EIP-6963 listener feeding `injected({ target })`. wagmi has no public API to add a connector after `createConfig`, so that needs wagmi's internal connector store (or re-creating the config on every announcement), which ties us to wagmi internals and needs its own tests; it is not a small change and was left out.
+- **A malicious announcer can take any rdns first** (see the trust model). Mitigated by showing the rdns when names collide, not prevented.
+- Homoglyph names that NFKC does not fold are not detected.
 
 ### Out of scope
 

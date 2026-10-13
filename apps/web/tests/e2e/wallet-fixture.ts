@@ -40,7 +40,34 @@ export interface FakeController {
  * Injects fake EIP-1193 providers announced over EIP-6963 before any page script runs. Authorisation
  * survives reloads through sessionStorage (like a real wallet remembering the site).
  */
+const recorded = new WeakMap<Page, string[]>();
+
+/** Every JSON-RPC method the page asked a fake wallet, across reloads (kept on the test side). */
+export function walletCalls(page: Page): readonly string[] {
+  return recorded.get(page) ?? [];
+}
+
+/**
+ * The only methods this change may send to a wallet: connect, read the account and chain, revoke
+ * permissions on disconnect, and switch or add a network. Anything else (signing, sending,
+ * reading the chain through the wallet) fails the test.
+ */
+export const ALLOWED_WALLET_METHODS: ReadonlySet<string> = new Set([
+  'eth_accounts',
+  'eth_chainId',
+  'eth_requestAccounts',
+  'wallet_requestPermissions',
+  'wallet_revokePermissions',
+  'wallet_switchEthereumChain',
+  'wallet_addEthereumChain',
+]);
+
 export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DEFAULT_WALLET]) {
+  const log: string[] = [];
+  recorded.set(page, log);
+  await page.exposeFunction('__recordCall', (method: string) => {
+    log.push(method);
+  });
   await page.addInitScript(
     ({ wallets, accountA, known }) => {
       const w = window as unknown as Record<string, unknown>;
@@ -71,6 +98,7 @@ export async function installWallets(page: Page, wallets: FakeWalletSpec[] = [DE
       const provider = {
         async request({ method, params }: { method: string; params?: unknown[] }) {
           ctl.calls.push(method);
+          (w.__recordCall as ((m: string) => void) | undefined)?.(method);
           switch (method) {
             case 'eth_requestAccounts':
               if (ctl.connect === 'reject') throw err(4001, 'User rejected the request.');
@@ -140,5 +168,86 @@ export async function fake<T>(
   return page.evaluate(
     (src) => (new Function('w', `return (${src})(w)`) as (w: Window) => T)(window),
     fn.toString(),
+  );
+}
+
+/**
+ * Announces wallets whose fields are objects that change between reads (a `toString` that first
+ * returns a data URI and then an https URL, a getter that flips, a Proxy). A sanitiser that
+ * checks one read and uses another would render the second.
+ */
+export async function installHostileAnnouncements(page: Page) {
+  await page.addInitScript(
+    ({ png }) => {
+      const flip = (first: string, later: string) => {
+        let n = 0;
+        return { length: 10, toString: () => (n++ === 0 ? first : later), valueOf: () => later };
+      };
+      const provider = {
+        request: async () => {
+          throw Object.assign(new Error('no'), { code: 4200 });
+        },
+        on() {},
+        removeListener() {},
+      };
+      const announce = (info: Record<string, unknown>) =>
+        window.dispatchEvent(
+          new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }),
+        );
+      const run = () => {
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a1',
+          name: 'Flip Icon',
+          rdns: 'flip.icon',
+          icon: flip(png, 'https://evil.example/steal.png'),
+        });
+        let reads = 0;
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a2',
+          name: 'Getter Icon',
+          rdns: 'getter.icon',
+          get icon() {
+            return reads++ === 0 ? png : 'https://evil.example/getter.png';
+          },
+        });
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a3',
+          name: flip('Flip Name', 'https://evil.example/name'),
+          rdns: flip('flip.name', 'evil.rdns'),
+          icon: png,
+        });
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a4',
+          name: 'Proxy Icon',
+          rdns: 'proxy.icon',
+          icon: new Proxy(
+            {},
+            {
+              get: (_t, key) =>
+                key === 'length'
+                  ? 10
+                  : key === Symbol.toPrimitive
+                    ? () => 'https://evil.example/proxy.png'
+                    : undefined,
+            },
+          ),
+        });
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a5',
+          name: new String('Boxed Name'),
+          rdns: 'boxed.name',
+          icon: new String(png),
+        });
+        announce({
+          uuid: '00000000-0000-4000-8000-0000000000a6',
+          name: 'Plain Good',
+          rdns: 'plain.good',
+          icon: png,
+        });
+      };
+      window.addEventListener('eip6963:requestProvider', run);
+      run();
+    },
+    { png: ICON_PNG },
   );
 }

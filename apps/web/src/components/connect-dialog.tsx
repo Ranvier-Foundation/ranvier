@@ -248,7 +248,12 @@ function ConnectDialog({ onClose }: { onClose: () => void }) {
                         className={ROW}
                       >
                         <WalletIcon icon={wallet.icon} name={wallet.name} />
-                        <span className="min-w-0 flex-1 truncate font-medium">{wallet.name}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{wallet.name}</span>
+                          {wallet.hint ? (
+                            <span className="block truncate text-tag text-sub">{wallet.hint}</span>
+                          ) : null}
+                        </span>
                         <span className="text-tag text-sub">
                           {attempt.kind === 'connecting' && attempt.wallet.key === wallet.key
                             ? t('wallet.dialog.connecting.tag')

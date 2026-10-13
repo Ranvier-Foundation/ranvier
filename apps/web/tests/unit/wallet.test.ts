@@ -13,6 +13,7 @@ import {
 import { createWalletConfig } from '../../src/lib/wallet/config';
 import { classifyWalletError } from '../../src/lib/wallet/errors';
 import {
+  MAX_HINT_LENGTH,
   MAX_ICON_LENGTH,
   MAX_NAME_LENGTH,
   MAX_WALLETS,
@@ -129,6 +130,141 @@ describe('wallet list sanitising', () => {
   });
 });
 
+describe('hostile provider values', () => {
+  const base = { id: 'io.example.wallet', name: 'Example', icon: PNG, uid: 'u1', type: 'injected' };
+  const hostile = (value: unknown) => value as string;
+  const flip = (first: string, later: string) => {
+    let n = 0;
+    return {
+      length: 10,
+      toString: () => (n++ === 0 ? first : later),
+      valueOf: () => later,
+      [Symbol.toPrimitive]: () => later,
+    };
+  };
+
+  it('refuses every non-string icon, id, name, uid and type', () => {
+    const objects: unknown[] = [
+      flip(PNG, 'https://evil.example/x.png'),
+      new String(PNG),
+      { length: 10, toString: () => PNG },
+      new Proxy({}, { get: (_t, k) => (k === 'length' ? 10 : () => PNG) }),
+      [PNG],
+      42,
+      null,
+      Symbol('x'),
+    ];
+    for (const o of objects) {
+      expect(safeIcon(o)).toBeUndefined();
+      expect(safeName(o)).toBe('');
+      expect(listWallets([{ ...base, icon: hostile(o) }])[0]?.icon).toBeUndefined();
+      expect(listWallets([{ ...base, id: hostile(o) }])).toEqual([]);
+      expect(listWallets([{ ...base, name: hostile(o) }])).toEqual([]);
+      expect(listWallets([{ ...base, uid: hostile(o) }])).toEqual([]);
+      expect(listWallets([{ ...base, type: hostile(o) }])).toEqual([]);
+    }
+  });
+
+  it('reads each field once: a getter that changes between reads cannot swap the value', () => {
+    let reads = 0;
+    const connector = {
+      ...base,
+      get icon() {
+        return reads++ === 0 ? PNG : 'https://evil.example/getter.png';
+      },
+    };
+    const [wallet] = listWallets([connector]);
+    expect(wallet?.icon).toBe(PNG);
+    expect(reads).toBe(1);
+    // The same for the name and the id.
+    let nameReads = 0;
+    let idReads = 0;
+    const second = {
+      ...base,
+      get name() {
+        return nameReads++ === 0 ? 'Good' : 'https://evil.example/name';
+      },
+      get id() {
+        return idReads++ === 0 ? 'good.wallet' : 'evil.rdns';
+      },
+    };
+    const [w2] = listWallets([second]);
+    expect([w2?.name, w2?.key, nameReads, idReads]).toEqual(['Good', 'good.wallet', 1, 1]);
+  });
+
+  it('a connector that is itself a Proxy returning changing values is read once per field', () => {
+    const counts: Record<string, number> = {};
+    const proxy = new Proxy(base, {
+      get(target, key: string) {
+        counts[key] = (counts[key] ?? 0) + 1;
+        return counts[key] === 1 ? target[key as keyof typeof target] : 'https://evil.example';
+      },
+    });
+    const [wallet] = listWallets([proxy]);
+    expect(wallet?.icon).toBe(PNG);
+    expect(wallet?.name).toBe('Example');
+    for (const key of ['id', 'name', 'icon', 'uid', 'type']) expect(counts[key]).toBe(1);
+  });
+});
+
+describe('name cleaning', () => {
+  it('removes hidden characters and normalises', () => {
+    expect(safeName('Meta​Mask')).toBe('MetaMask');
+    expect(safeName('Meta­Mask⁠')).toBe('MetaMask');
+    expect(safeName('Wal️let\u{e0100}')).toBe('Wallet');
+    expect(safeName('A\u{e0041}\u{e0042}B')).toBe('AB');
+    expect(safeName('Ｍｅｔａ')).toBe('Meta');
+    expect(safeName('Line break here')).toBe('Line break here');
+    expect(safeName('Wal᠎let')).toBe('Wallet');
+  });
+  it('drops names with no letter or digit', () => {
+    for (const blank of ['ㅤ', 'ᅟᅠ', 'ㅤㅤ ', '   ', '---', '​', '!!!', '⁠­']) {
+      expect(safeName(blank)).toBe('');
+    }
+    expect(listWallets([{ id: 'a.b', name: 'ㅤ', icon: PNG, uid: 'u', type: 'injected' }])).toEqual(
+      [],
+    );
+    expect(safeName('ㅤ Okay')).toBe('Okay');
+    expect(safeName('1Wallet')).toBe('1Wallet');
+  });
+});
+
+describe('look-alike names', () => {
+  const c = (id: string, name: string, uid: string): ConnectorLike => ({
+    id,
+    name,
+    icon: PNG,
+    uid,
+    type: 'injected',
+  });
+  it('shows the rdns on every row that shares a cleaned, case-folded name', () => {
+    const list = listWallets([
+      c('io.metamask', 'Impostor', '1'),
+      c('io.metamask.fake', 'MetaMask', '2'),
+      c('io.metamask.two', 'metamask​', '3'),
+      c('io.metamask.three', 'ＭｅｔａＭａｓｋ', '4'),
+      c('solo.wallet', 'Solo', '5'),
+    ]);
+    const by = Object.fromEntries(list.map((w) => [w.key, w.hint]));
+    expect(by['io.metamask']).toBeUndefined();
+    expect(by['solo.wallet']).toBeUndefined();
+    expect(by['io.metamask.fake']).toBe('io.metamask.fake');
+    expect(by['io.metamask.two']).toBe('io.metamask.two');
+    expect(by['io.metamask.three']).toBe('io.metamask.three');
+  });
+  it('truncates a long rdns and keeps the first announcement of an rdns', () => {
+    const long = `a.${'b'.repeat(100)}`;
+    const list = listWallets([c(long, 'Same', '1'), c('x.y', 'Same', '2'), c('X.Y', 'Same', '3')]);
+    expect(list).toHaveLength(2);
+    const hint = list.find((w) => w.key === long)?.hint ?? '';
+    expect(Array.from(hint)).toHaveLength(MAX_HINT_LENGTH);
+    expect(hint.endsWith('…')).toBe(true);
+    // First wins: the second 'x.y' (different case) is the same rdns and is ignored.
+    expect(list.filter((w) => w.key === 'x.y')).toHaveLength(1);
+    expect(list.find((w) => w.key === 'x.y')?.connector.uid).toBe('2');
+  });
+});
+
 describe('chains and config derive from the registry', () => {
   it('maps every EVM registry chain, in order, with the registry values', () => {
     expect(EVM_CHAINS.map((c) => c.key)).toEqual(
@@ -144,6 +280,13 @@ describe('chains and config derive from the registry', () => {
       expect(w.rpcUrls.default.http).toEqual([]);
     }
     expect(evmChainId(CHAINS.find((c) => c.family === 'solana')!)).toBeUndefined();
+  });
+  it('every chain the network menu can offer is an EVM chain with a numeric id', () => {
+    expect(EVM_CHAINS.length).toBeGreaterThan(0);
+    for (const chain of EVM_CHAINS) {
+      expect(chain.family).toBe('evm');
+      expect(evmChainId(chain)).toBeTypeOf('number');
+    }
   });
   it('looks chains up by wallet id and builds explorer links', () => {
     expect(registryChainByWalletId(1)?.key).toBe('evm:1');
