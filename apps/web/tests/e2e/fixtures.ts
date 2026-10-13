@@ -65,7 +65,7 @@ interface Fixtures {
   pageChecks: boolean;
   /** The CSP recording for this test's page (always on). */
   csp: CspRecord;
-  pageProblems: void;
+  pageProblems: undefined;
 }
 
 export const test = base.extend<Fixtures>({
@@ -97,7 +97,7 @@ export const test = base.extend<Fixtures>({
         if (r.status() >= 400 && !expected404) list.push(`${r.status()} ${r.url()}`);
       });
       page.on('pageerror', (e) => list.push(`page error: ${e.message}`));
-      await use();
+      await use(undefined);
       if (!pageChecks) return;
       await settle(page);
       for (const v of csp.violations) {
