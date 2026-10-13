@@ -26,6 +26,7 @@ Where the canvas beats the handoff or these guidelines, this file is updated to 
 8. **Accessibility is part of done**, not a later pass (see [Accessibility](#accessibility)).
 9. **Strings are i18n-ready from the first commit.** User-visible text lives in message files keyed by id; English at launch.
 10. **Record deviations.** Any intentional difference from the canvas is written down below with the reason.
+11. **No inline styles.** No `style` prop and no `<style>` element (or `dangerouslySetInnerHTML`) in `apps/web`; ESLint (`no-restricted-syntax`) fails the build on all three. The app must emit zero inline styles so the Content Security Policy can drop `style-src 'unsafe-inline'`. Dynamic values go through classes and CSS variables defined from tokens (the Logo picks one of four `--logo-<size>-*` token sets by class). A truly dynamic value uses `ref.style.setProperty` inside an effect and needs a code comment saying why a class cannot do it. Next's default 404 and global-error pages emit inline styles, so the app has its own `not-found.tsx` and `global-error.tsx`. A Playwright test (`no-inline-styles.spec.ts`) asserts no `[style]` attributes and no `<style>` elements on the main screens.
 
 ## 2. Tokens
 
@@ -129,7 +130,7 @@ The lowercase word "ranvier" in Inter 700 at -0.055em tracking, followed by the 
 
 The table is checked against the canvas formulas (`logoGeometry` in `apps/web/src/components/logo-geometry.ts`) by unit tests for every reference size. The lift is `round(0.1367 fs + 0.55 fs - box)` and the space from the "r" is `max(2, round(0.09 fs))`.
 
-Wordmark in `ink` with nodes in `accent` on light surfaces; wordmark white with nodes in `blush` on `deep`. Build the logo once as a component taking a size; do not hand-position it per screen.
+Wordmark in `ink` with nodes in `accent` on light surfaces; wordmark white with nodes in `blush` on `deep`. Build the logo once as a component taking a size; do not hand-position it per screen. The size is one of the four reference sizes above (`LogoSize`: 32, 29, 22, 15); the geometry lives in the `--logo-<size>-*` tokens in `tokens.css`, applied by class, and a unit test checks them against `logoGeometry()`. A new context needs its row in this table, its tokens and its class first.
 
 ## 5. Components
 
