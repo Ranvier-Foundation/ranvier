@@ -24,6 +24,7 @@ The full internal spec lives at `docs/private/spec.md`. It is git-ignored and ne
 - TypeScript strict everywhere; no `any`.
 - Money amounts are `bigint` base units; USD values are integer cents. Never use floats for money.
 - Fee rates are basis points and must never exceed the contract cap (30 bps).
+- Dependencies: exact pins, at least 14 days old (enforced by pnpm), no install scripts; follow [docs/runbooks/dependencies.md](docs/runbooks/dependencies.md).
 
 ## UI work
 
