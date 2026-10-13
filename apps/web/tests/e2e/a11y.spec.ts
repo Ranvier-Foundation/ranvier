@@ -1,6 +1,8 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { gotoSwap, RGB, styles } from './helpers';
+import { ROUTES } from './routes';
 
 const VIEWPORTS = [
   [1440, 900],
@@ -16,11 +18,15 @@ async function scan(page: Page) {
 }
 
 test.describe('axe', () => {
-  for (const [w, h] of VIEWPORTS) {
-    test(`no violations at ${w}x${h}`, async ({ page }) => {
-      await gotoSwap(page, w, h);
-      expect((await scan(page)).violations).toEqual([]);
-    });
+  for (const route of ROUTES) {
+    for (const [w, h] of VIEWPORTS) {
+      test(`${route}: no violations at ${w}x${h}`, async ({ page }) => {
+        await page.setViewportSize({ width: w, height: h });
+        await page.goto(route);
+        await page.evaluate(() => document.fonts.ready);
+        expect((await scan(page)).violations).toEqual([]);
+      });
+    }
   }
 
   test('no violations with the more menu open at 768', async ({ page }) => {

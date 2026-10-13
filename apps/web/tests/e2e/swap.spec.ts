@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { box, contrast, gotoSwap, RGB, styles } from './helpers';
 
 const header = (page: Page) => page.getByRole('banner');
@@ -16,7 +17,7 @@ test.describe('swap screen at 1440x900: geometry and computed styles', () => {
     expect(h['x-content-type-options']).toBe('nosniff');
     expect(h['strict-transport-security']).toContain('max-age=63072000');
     expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
-    expect(h['referrer-policy']).toBe('strict-origin-when-cross-origin');
+    expect(h['referrer-policy']).toBe('no-referrer');
     expect(h['x-powered-by']).toBeUndefined();
   });
 

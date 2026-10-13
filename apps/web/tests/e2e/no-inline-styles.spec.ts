@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
+import { NOT_FOUND_ROUTE } from './routes';
 import { installWallets, DEFAULT_WALLET } from './wallet-fixture';
 
 /**
@@ -100,7 +102,7 @@ for (const { width, height } of WIDTHS) {
 
     test('unknown route is a 404 with no inline styles', async ({ page }) => {
       await watch(page);
-      const response = await page.goto('/this-page-does-not-exist');
+      const response = await page.goto(NOT_FOUND_ROUTE);
       expect(response?.status()).toBe(404);
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(
         'This page is not built yet',
@@ -111,7 +113,7 @@ for (const { width, height } of WIDTHS) {
     });
 
     test('404 page passes the axe scan and its link is a 44 px target', async ({ page }) => {
-      await page.goto('/this-page-does-not-exist');
+      await page.goto(NOT_FOUND_ROUTE);
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'])
         .analyze();
