@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { installWallets, DEFAULT_WALLET } from './wallet-fixture';
 
@@ -107,6 +108,16 @@ for (const { width, height } of WIDTHS) {
       await expect(page.getByRole('link', { name: 'Back to Swap' })).toHaveAttribute('href', '/');
       await page.evaluate(() => document.fonts.ready);
       await expectNoInlineStyles(page);
+    });
+
+    test('404 page passes the axe scan and its link is a 44 px target', async ({ page }) => {
+      await page.goto('/this-page-does-not-exist');
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'])
+        .analyze();
+      expect(results.violations).toEqual([]);
+      const link = await page.getByRole('link', { name: 'Back to Swap' }).boundingBox();
+      expect(link?.height).toBe(44);
     });
 
     test('menus open', async ({ page }) => {
