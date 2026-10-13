@@ -23,9 +23,12 @@ const ROW =
 function NetworkChoices({
   active,
   onDone,
+  heading = false,
 }: {
   active: ChainConfig | undefined;
   onDone?: () => void;
+  /** Show the visible "Switch network" caption (the more menu, where it sits among links). */
+  heading?: boolean;
 }) {
   const { switchChainAsync } = useSwitchChain();
   const [state, setState] = useState<SwitchState>({ kind: 'idle' });
@@ -47,6 +50,11 @@ function NetworkChoices({
 
   return (
     <div role="group" aria-label={t('header.network.menu.heading')} className="flex flex-col gap-2">
+      {heading ? (
+        <p className="m-0 mt-8 px-14 pb-4 text-caption text-sub">
+          {t('header.network.menu.heading')}
+        </p>
+      ) : null}
       {active ? null : (
         <div className="mb-6 flex flex-col gap-8 bg-warning-tint p-12 text-warning-text">
           <p className="m-0 text-caption leading-body">{t('header.network.unsupported.body')}</p>
@@ -119,7 +127,7 @@ export function NetworkControl({ variant }: { variant: 'pill' | 'list' }) {
   if (variant === 'list') {
     return (
       <div className="w-full narrow:hidden">
-        <NetworkChoices active={active} />
+        <NetworkChoices active={active} heading />
       </div>
     );
   }
@@ -156,7 +164,7 @@ export function NetworkControl({ variant }: { variant: 'pill' | 'list' }) {
       <div
         id={panelId}
         hidden={!open}
-        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6"
+        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6 whitespace-normal"
       >
         {open ? <NetworkChoices active={active} onDone={() => setOpen(false)} /> : null}
       </div>

@@ -509,3 +509,42 @@ test.describe('connected header at every width', () => {
     });
   }
 });
+
+test.describe('states, captured for review', () => {
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+  ] as const) {
+    test(`menus and error states at ${width}`, async ({ page }, testInfo) => {
+      await installWallets(page);
+      await gotoSwap(page, width, height);
+      const shot = async (name: string) => {
+        const path = testInfo.outputPath(`${name}-${width}.png`);
+        await page.screenshot({ path });
+        await testInfo.attach(`${name}-${width}`, { path, contentType: 'image/png' });
+      };
+      await fake(page, (w) => (w.__fake.connect = 'reject'));
+      await connectButton(page).click();
+      await dialog(page)
+        .getByRole('button', { name: /Fixture Wallet/ })
+        .click();
+      await expect(dialog(page).getByRole('alert')).toBeVisible();
+      await shot('dialog-rejected');
+      await fake(page, (w) => (w.__fake.connect = 'ok'));
+      await dialog(page).getByRole('button', { name: 'Try again' }).click();
+      await expect(walletPill(page)).toBeVisible();
+      await walletPill(page).click();
+      await shot('wallet-menu');
+      await page.keyboard.press('Escape');
+      await fake(page, (w) => w.__emit('chainChanged', '0x89'));
+      if (width >= 640) {
+        await header(page)
+          .getByRole('button', { name: /^Network:/ })
+          .click();
+      } else {
+        await header(page).getByRole('button', { name: 'More' }).click();
+      }
+      await shot('network-unsupported');
+    });
+  }
+});

@@ -5,7 +5,7 @@ const FILL: Record<AvatarToken, string> = {
   primary: 'bg-primary',
   blush: 'bg-blush',
   accent: 'bg-accent',
-  sub: 'bg-sub',
+  'deep-tile': 'bg-deep-tile',
 };
 
 /** 30 px round wallet avatar: four quadrants chosen from the address (see `avatarQuadrants`). */

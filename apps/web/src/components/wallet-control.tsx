@@ -133,7 +133,7 @@ export function WalletControl() {
       <div
         id={panelId}
         hidden={!open}
-        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6"
+        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6 whitespace-normal"
       >
         {open ? <WalletMenuPanel address={address} onDone={() => setOpen(false)} /> : null}
       </div>

@@ -3,7 +3,7 @@
  * few design tokens, derived from the address. Pure and deterministic; only token names leave
  * this module (components turn them into token utility classes), so no raw colour can appear.
  */
-export const AVATAR_TOKENS = ['primary', 'blush', 'accent', 'sub'] as const;
+export const AVATAR_TOKENS = ['primary', 'blush', 'accent', 'deep-tile'] as const;
 export type AvatarToken = (typeof AVATAR_TOKENS)[number];
 export type AvatarQuadrants = readonly [AvatarToken, AvatarToken, AvatarToken, AvatarToken];
 
