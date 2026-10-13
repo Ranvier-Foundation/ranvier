@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Logo } from '../../src/components/logo';
+import { LOGO_SIZES, Logo, type LogoSize } from '../../src/components/logo';
 import { logoGeometry } from '../../src/components/logo-geometry';
 
 /** docs/ui-guidelines.md section 4 table (square, gap, mark box), plus the canvas offsets. */
@@ -47,19 +49,58 @@ describe('logo geometry', () => {
   });
 });
 
+const root = process.cwd();
+const tokensCss = readFileSync(join(root, 'src/styles/tokens.css'), 'utf8');
+const globalsCss = readFileSync(join(root, 'src/app/globals.css'), 'utf8');
+const token = (name: string) => {
+  const m = new RegExp(`--${name}:\\s*(\\d+)px;`).exec(tokensCss);
+  if (!m) throw new Error(`token --${name} missing or not a whole-pixel value`);
+  return Number(m[1]);
+};
+
+describe('Logo tokens equal logoGeometry', () => {
+  it.each(TABLE)('$context ($fs px)', ({ fs, square, gap, box, lift, spaceBefore }) => {
+    const g = logoGeometry(fs);
+    expect(token(`logo-${fs}-size`)).toBe(g.fontSize);
+    expect(token(`logo-${fs}-square`)).toBe(g.square);
+    expect(token(`logo-${fs}-gap`)).toBe(g.gap);
+    expect(token(`logo-${fs}-box`)).toBe(g.box);
+    expect(token(`logo-${fs}-lift`)).toBe(g.lift);
+    expect(token(`logo-${fs}-space`)).toBe(g.spaceBefore);
+    expect(token(`logo-${fs}-square`) * 2 + token(`logo-${fs}-gap`)).toBe(g.box);
+    expect([square, gap, box, lift, spaceBefore]).toEqual([
+      g.square,
+      g.gap,
+      g.box,
+      g.lift,
+      g.spaceBefore,
+    ]);
+  });
+
+  it('has exactly the reference sizes', () => {
+    expect([...LOGO_SIZES].sort()).toEqual(TABLE.map((r) => r.fs).sort());
+    const declared = [...tokensCss.matchAll(/--logo-(\d+)-size:/g)].map((m) => Number(m[1]));
+    expect(declared.sort()).toEqual([...LOGO_SIZES].sort());
+  });
+
+  it.each(TABLE)('$fs px class maps to its own tokens', ({ fs }) => {
+    const rule = new RegExp(`\\.logo-${fs}\\s*\\{([^}]*)\\}`).exec(globalsCss)?.[1] ?? '';
+    for (const part of ['size', 'square', 'gap', 'box', 'lift', 'space']) {
+      expect(rule).toContain(`--logo-${part}: var(--logo-${fs}-${part});`);
+    }
+  });
+});
+
 describe('Logo markup at every reference size', () => {
-  it.each(TABLE)(
-    '$context renders $square px squares in a $box px box',
-    ({ fs, square, step, box, lift, spaceBefore }) => {
-      const html = renderToStaticMarkup(<Logo size={fs} />);
-      expect(html).toContain(`font-size:${fs}px`);
-      expect(html).toContain(
-        `width:${box}px;height:${box}px;margin-bottom:${lift}px;margin-left:${spaceBefore}px`,
-      );
-      expect(html).toContain(`left:0;top:${step}px;width:${square}px;height:${square}px`);
-      expect(html).toContain(`left:${step}px;top:0;width:${square}px;height:${square}px`);
-    },
-  );
+  it.each(TABLE)('$context uses the size class and no inline style', ({ fs }) => {
+    const html = renderToStaticMarkup(<Logo size={fs as LogoSize} />);
+    expect(html).toContain(`data-logo="${fs}"`);
+    expect(html).toContain(`logo-${fs}`);
+    expect(html).toContain('logo-square-low');
+    expect(html).toContain('logo-square-high');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain('style=');
+  });
 
   it('draws wordmark white with blush nodes on deep', () => {
     const html = renderToStaticMarkup(<Logo size={32} tone="deep" />);

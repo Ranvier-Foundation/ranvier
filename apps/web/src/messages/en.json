@@ -75,5 +75,12 @@
   "wallet.retry": "Try again",
   "wallet.connected.title": "Wallet connected",
   "wallet.connected.body": "{address} is connected.",
-  "wallet.connected.done": "Done"
+  "wallet.connected.done": "Done",
+  "notfound.title": "This page is not built yet",
+  "notfound.body": "The page you asked for does not exist here yet. Swap is ready to use.",
+  "notfound.back": "Back to Swap",
+  "error.title": "Something went wrong",
+  "error.body": "Ranvier hit a problem and could not show this page. Nothing was sent from your wallet.",
+  "error.retry": "Try again",
+  "error.back": "Back to Swap"
 }
