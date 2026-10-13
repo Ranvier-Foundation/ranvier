@@ -69,8 +69,10 @@ export interface CspInput {
   /** From `apiOrigin()`; undefined means same-origin only. */
   api: string | undefined;
   /**
-   * `next dev` only: React needs `eval` there to rebuild server error stacks. Never set for a
-   * production build (a unit test asserts the production policy has no `unsafe-eval`).
+   * `next dev` only, never a production build (unit and e2e tests assert the production policy
+   * has no `unsafe-*`): React needs `eval` there to rebuild server error stacks, and Turbopack's
+   * dev CSS loader injects un-nonced `<style>` elements, so styles get `'unsafe-inline'` (without
+   * the nonce, which would cancel it). Production serves CSS as files.
    */
   dev: boolean;
 }
@@ -98,7 +100,7 @@ export function contentSecurityPolicy({ nonce, api, dev }: CspInput): string {
   return [
     "default-src 'none'",
     `script-src ${n} 'strict-dynamic'${dev ? " 'unsafe-eval'" : ''} 'report-sample'`,
-    `style-src 'self' ${n}`,
+    dev ? "style-src 'self' 'unsafe-inline'" : `style-src 'self' ${n}`,
     "img-src 'self' data:",
     "font-src 'self'",
     api ? `connect-src 'self' ${api}` : "connect-src 'self'",

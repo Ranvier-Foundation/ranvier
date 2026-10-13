@@ -31,7 +31,7 @@ The wagmi config has one transport per chain and every transport refuses request
 
 ### CSP
 
-Unchanged. `img-src 'self' data:` already allows the `data:` icons wallets announce; it is not widened. A test pins that the policy has no `wss:`, WalletConnect, Reown or wildcard origin.
+Unchanged by this change (the strict policy that followed is ADR 0008). `img-src 'self' data:` already allows the `data:` icons wallets announce; it is not widened. A test pins that the policy has no `wss:`, WalletConnect, Reown or wildcard origin.
 
 ### What is stored in the browser
 
@@ -57,7 +57,7 @@ Four quadrants, each one of `primary`, `blush`, `accent` or `deep-tile`, chosen 
 
 ### Residual risks
 
-- **`script-src 'unsafe-inline'` remains in the CSP** (pre-existing; Next inlines its bootstrap scripts). Wallet code now lives in the app, so a script injection can reach wallet requests. The fix is a strict CSP with per-request nonces, `'strict-dynamic'` and SRI (spec section 9). It is not part of this change and **must land before any signing or transaction flow**.
+- ~~**`script-src 'unsafe-inline'` remains in the CSP**~~ **Closed by [ADR 0008](0008-strict-csp.md):** the policy is now strict (per-request nonces with `'strict-dynamic'`, no `'unsafe-inline'` for scripts or styles), enforced and tested before any signing or transaction flow. SRI was replaced by release-manifest monitoring (a deliberate spec deviation recorded there).
 - **An announcement flood slows the tab (availability only).** mipd's store is unbounded, and wagmi runs its setup for every stored provider on every announcement, which is quadratic: the security review measured 800 announcements at about 3.7 s of main-thread time. Exploiting it needs a hostile script or extension already running in the page, and gains nothing but a slow page. Accepted. Bounding it would mean `multiInjectedProviderDiscovery: false` plus our own capped EIP-6963 listener feeding `injected({ target })`. wagmi has no public API to add a connector after `createConfig`, so that needs wagmi's internal connector store (or re-creating the config on every announcement), which ties us to wagmi internals and needs its own tests; it is not a small change and was left out.
 - **A malicious announcer can take any rdns first** (see the trust model). Mitigated by showing the rdns when names collide, not prevented.
 - Homoglyph names that neither NFKC nor the name skeleton fold (a Cyrillic "a" for a Latin one) are not detected as look-alikes.

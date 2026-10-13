@@ -58,7 +58,7 @@ describe('content security policy', () => {
     }
   });
 
-  it("adds 'unsafe-eval' only for next dev, to scripts only", () => {
+  it("next dev only: 'unsafe-eval' for scripts, 'unsafe-inline' (no nonce) for styles", () => {
     const dev = policy(undefined, true);
     expect(sources(dev, 'script-src')).toEqual([
       `'nonce-${NONCE}'`,
@@ -66,7 +66,12 @@ describe('content security policy', () => {
       "'unsafe-eval'",
       "'report-sample'",
     ]);
-    expect(dev.match(/unsafe-/g)).toEqual(['unsafe-']);
+    expect(sources(dev, 'style-src')).toEqual(["'self'", "'unsafe-inline'"]);
+    expect(dev.match(/'unsafe-[a-z-]+'/g)).toEqual(["'unsafe-eval'", "'unsafe-inline'"]);
+    // Everything else is identical to production.
+    const rest = (p: string) =>
+      p.split('; ').filter((d) => !d.startsWith('script-src') && !d.startsWith('style-src'));
+    expect(rest(dev)).toEqual(rest(policy(undefined)));
   });
 
   it('refuses a nonce that is not 16 bytes of base64 (cannot alter the policy)', () => {

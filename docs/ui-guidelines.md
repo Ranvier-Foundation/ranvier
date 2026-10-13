@@ -26,7 +26,7 @@ Where the canvas beats the handoff or these guidelines, this file is updated to 
 8. **Accessibility is part of done**, not a later pass (see [Accessibility](#accessibility)).
 9. **Strings are i18n-ready from the first commit.** User-visible text lives in message files keyed by id; English at launch.
 10. **Record deviations.** Any intentional difference from the canvas is written down below with the reason.
-11. **No inline styles.** No `style` prop and no `<style>` element (or `dangerouslySetInnerHTML`) in `apps/web`; ESLint (`no-restricted-syntax`) fails the build on all three. The app must emit zero inline styles so the Content Security Policy can drop `style-src 'unsafe-inline'`. Dynamic values go through classes and CSS variables defined from tokens (the Logo picks one of four `--logo-<size>-*` token sets by class). A truly dynamic value uses `ref.style.setProperty` inside an effect and needs a code comment saying why a class cannot do it. Next's default 404 and global-error pages emit inline styles, so the app has its own `not-found.tsx` and `global-error.tsx`. A Playwright test (`no-inline-styles.spec.ts`) asserts no `[style]` attributes and no `<style>` elements on the main screens.
+11. **No inline styles.** No `style` prop and no `<style>` element (or `dangerouslySetInnerHTML`) in `apps/web`; ESLint (`no-restricted-syntax`) fails the build on all three. The app must emit zero inline styles: the Content Security Policy has no `style-src 'unsafe-inline'` (ADR 0008), so the browser refuses them. Dynamic values go through classes and CSS variables defined from tokens (the Logo picks one of four `--logo-<size>-*` token sets by class). A truly dynamic value uses `ref.style.setProperty` inside an effect and needs a code comment saying why a class cannot do it. Next's default 404 and global-error pages emit inline styles, so the app has its own `not-found.tsx` and `global-error.tsx`. A Playwright test (`no-inline-styles.spec.ts`) asserts no `[style]` attributes and no `<style>` elements on the main screens.
 
 ## 2. Tokens
 
@@ -203,6 +203,7 @@ A screen is done when all of these hold:
 4. An automated accessibility scan (axe) passes, and the keyboard path has been walked by hand.
 5. Every string comes from the message files, and every number from the API or shared packages.
 6. **Looked at, not only measured.** Screenshots at 1440, 1200, 768 and 390 px were taken with `pnpm --filter @ranvier/web screenshot` (see [Looking at the page locally](#looking-at-the-page-locally)), the PNGs were opened and viewed, and the PR lists what was seen at each width (header, panel, button) and any difference from the artboard. Numeric assertions miss alignment and composition errors (a header group floating away from the right edge passed every value test), so a task without this list is not done.
+7. **Covered by the CSP and axe tests.** The route is listed in `apps/web/tests/e2e/routes.ts`, so `csp.spec.ts` (strict policy, zero violations) and the axe scan run on it. Every e2e test also fails on any CSP violation (shared fixture in `tests/e2e/fixtures.ts`, ADR 0008).
 
 ### Token guard
 
@@ -224,7 +225,7 @@ pnpm --filter @ranvier/web exec playwright install chromium   # once
 pnpm e2e                                                      # builds, starts the production build, runs the tests
 ```
 
-`apps/web/tests/e2e` holds the geometry and computed-style tests (`swap.spec.ts`) and the axe, keyboard and reduced-motion tests (`a11y.spec.ts`). They run against `next build` plus `next start` on port 3100, in CI after the build. Unit tests (`pnpm --filter @ranvier/web test`) cover the tokens against the colour table above, the logo geometry for every reference size, the message files, the fee copy and the guard.
+`apps/web/tests/e2e` holds the geometry and computed-style tests (`swap.spec.ts`) and the axe, keyboard and reduced-motion tests (`a11y.spec.ts`). `csp.spec.ts` checks the strict Content Security Policy (header, nonces, zero violations, injected markup refused), and `fixtures.ts` makes every test fail on a CSP violation, an off-origin request or a console error. They run against `next build` plus `next start` on port 3100, in CI after the build. Unit tests (`pnpm --filter @ranvier/web test`) cover the tokens against the colour table above, the logo geometry for every reference size, the message files, the fee copy and the guard.
 
 ## Looking at the page locally
 
