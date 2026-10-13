@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { useDisclosure } from '@/lib/use-disclosure';
 
 /**
  * The "more" control: a disclosure button that opens a panel of links. Below 1200 px the panel
@@ -9,29 +10,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
  * to the button.
  */
 export function MoreMenu({ label, children }: { label: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const root = useRef<HTMLDivElement>(null);
-  const button = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpen(false);
-        button.current?.focus();
-      }
-    };
-    const onPointer = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('pointerdown', onPointer);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.removeEventListener('pointerdown', onPointer);
-    };
-  }, [open]);
+  const { open, setOpen, panelId, root, button } = useDisclosure();
 
   return (
     <div ref={root} className="relative">
@@ -53,7 +32,7 @@ export function MoreMenu({ label, children }: { label: string; children: ReactNo
       <div
         id={panelId}
         hidden={!open}
-        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6"
+        className="absolute top-full right-0 z-10 mt-6 w-menu border border-line bg-surface p-6 whitespace-normal"
       >
         {children}
       </div>

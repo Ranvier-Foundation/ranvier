@@ -69,3 +69,8 @@
 @utility grid-cols-header {
   grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
 }
+
+/* An open modal dialog freezes the page behind it. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}

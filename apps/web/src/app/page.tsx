@@ -1,4 +1,5 @@
 import { Header } from '@/components/header';
+import { SwapCta } from '@/components/swap-cta';
 import { SwapPanel } from '@/components/swap-panel';
 import { t } from '@/lib/i18n';
 
@@ -10,12 +11,7 @@ export default function Home() {
         <h1 className="sr-only">{t('swap.title')}</h1>
         <SwapPanel />
         <div className="mt-16 flex justify-center">
-          <button
-            type="button"
-            className="flex h-56 w-cta items-center justify-center rounded-pill bg-primary text-lead font-medium text-on-primary outline-primary transition hover:opacity-88"
-          >
-            {t('swap.connect')}
-          </button>
+          <SwapCta />
         </div>
       </main>
     </>

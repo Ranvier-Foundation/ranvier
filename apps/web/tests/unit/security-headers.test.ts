@@ -88,4 +88,11 @@ describe('security headers: connect-src', () => {
     );
     expect(csp('https://api.ranvier.example')).not.toContain('*');
   });
+
+  it('wallet connection adds nothing: no RPC, relay or WebSocket origin, data: images only', () => {
+    const policy = csp('https://api.ranvier.example');
+    expect(directive(policy, 'connect-src')).toBe("connect-src 'self' https://api.ranvier.example");
+    expect(policy).not.toMatch(/wss?:|walletconnect|reown|\*/);
+    expect(directive(policy, 'img-src')).toBe("img-src 'self' data:");
+  });
 });
