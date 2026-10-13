@@ -1,4 +1,4 @@
-import { isStablecoin, isWrappedNative, NATIVE } from '@ranvier/chains';
+import { deepFreeze, isStablecoin, isWrappedNative, NATIVE } from '@ranvier/chains';
 import type { FeeQuote, FeeReason, TokenRef, UsdCents } from '@ranvier/types';
 
 /** Must match MAX_FEE_BPS in contracts/src/FeeWrapper.sol. */
@@ -6,19 +6,6 @@ export const MAX_FEE_BPS = 30;
 export const BPS_DENOMINATOR = 10_000n;
 
 export const FIRST_SWAP_PROMO_CAP: UsdCents = 1_000_00n;
-
-/**
- * Freezes an object and every object nested in it, so runtime code cannot change values that
- * end up in signed quotes. Returns the same reference with its type unchanged.
- */
-function deepFreeze<T extends object>(value: T): T {
-  for (const nested of Object.values(value) as unknown[]) {
-    if (typeof nested === 'object' && nested !== null && !Object.isFrozen(nested)) {
-      deepFreeze(nested);
-    }
-  }
-  return Object.freeze(value);
-}
 
 /**
  * The fee schedule as data: the single source for `feeRate` and for anything that shows the

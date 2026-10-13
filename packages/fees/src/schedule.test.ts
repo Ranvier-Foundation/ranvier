@@ -1,3 +1,4 @@
+import { getChain } from '@ranvier/chains';
 import { describe, expect, it } from 'vitest';
 import type { Token } from '@ranvier/types';
 import {
@@ -389,5 +390,51 @@ describe('FEE_SCHEDULE is immutable at runtime', () => {
     expect(FIRST_SWAP_PROMO_CAP).toBe(100_000n);
     expect(FEE_SCHEDULE.maxBps).toBe(MAX_FEE_BPS);
     expect(FEE_SCHEDULE.firstSwapFreeUsd).toBe(FIRST_SWAP_PROMO_CAP);
+  });
+});
+
+describe('the registry fee data behind feeRate is immutable at runtime', () => {
+  const BASE_USDC: Token = {
+    chain: 'evm:8453',
+    address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    symbol: 'USDC',
+    decimals: 6,
+  };
+  const BASE_DAI: Token = {
+    chain: 'evm:8453',
+    address: '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    symbol: 'DAI',
+    decimals: 18,
+  };
+
+  it('keeps WETH out of the stablecoin rate and the documented fees after mutation attempts', () => {
+    const baseChain = getChain('evm:8453');
+    if (!baseChain) throw new Error('registry is missing Base');
+    const stable = baseChain.stablecoins as Record<string, string>;
+    expect(() => (stable.WETH = BASE_WETH.address)).toThrow(TypeError);
+    expect(() => delete stable.USDC).toThrow(TypeError);
+    expect(() => {
+      (baseChain as { wrappedNative: string }).wrappedNative = BASE_USDC.address;
+    }).toThrow(TypeError);
+    // WETH -> USDC on Base: the size tier (20 bps), not the stablecoin rate.
+    expect(
+      quoteFee({
+        sellToken: BASE_WETH,
+        buyToken: BASE_USDC,
+        sellAmount: 10n ** 18n,
+        usdValue: 5_000_00n,
+        isFirstSwap: false,
+      }),
+    ).toEqual({ bps: 20, reason: 'tier-under-10k', amount: 2n * 10n ** 15n, waivedUsd: 0n });
+    // USDC -> DAI on Base still pays exactly 5 bps.
+    expect(
+      quoteFee({
+        sellToken: BASE_USDC,
+        buyToken: BASE_DAI,
+        sellAmount: 1_000_000_000n,
+        usdValue: 1_000_00n,
+        isFirstSwap: false,
+      }),
+    ).toEqual({ bps: 5, reason: 'stablecoin', amount: 500_000n, waivedUsd: 0n });
   });
 });

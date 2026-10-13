@@ -1,10 +1,13 @@
 import type { ChainKey, TokenInfo, TokenTag } from '@ranvier/types';
+import { deepFreeze } from './freeze.js';
 
 /** The OP Stack L2StandardBridge predeploy, which mints Base's standard bridged tokens. */
 export const OP_STANDARD_BRIDGE = '0x4200000000000000000000000000000000000010';
 /** Arbitrum One L2 gateways (read from each token's `l2Gateway()` when it was listed). */
 export const ARB_STANDARD_GATEWAY = '0x09e9222e96e7b4ae2a407b98d48e330053351eee';
 export const ARB_WETH_GATEWAY = '0x6c411ad3e74de3e7bd422b94a27770f5b86c623b';
+/** Maker's custom Dai gateway on Arbitrum One (its `l1Dai()` is L1 DAI, `l2Dai()` Arbitrum DAI). */
+export const ARB_DAI_GATEWAY = '0x467194771dae2967aef3ecbedd3bf9a310c76c65';
 
 /**
  * How a bridged token is linked to its L1 original, checked by `verify:tokens`:
@@ -18,6 +21,17 @@ export interface BridgeLink {
 }
 
 /**
+ * Written reason why a `bridged` token has no checkable `BridgeLink` (its gateway is not a
+ * standard one), with the on-chain fact that stands in for it: `verify:tokens` checks that
+ * `wards(ward)` on the token is 1, i.e. the named gateway may mint it (Maker-style auth).
+ */
+export interface BridgeExemption {
+  reason: string;
+  /** Lowercase gateway address that must be a ward (minter) of the token. */
+  ward: string;
+}
+
+/**
  * A curated entry: the public `TokenInfo` plus verification data that is never served to
  * clients (the API copies public fields one by one).
  */
@@ -25,19 +39,8 @@ export interface CuratedToken extends TokenInfo {
   /** On-chain `symbol()` when the display symbol differs (e.g. `USD₮0` for USDT0). */
   onchainSymbol?: string;
   bridge?: BridgeLink;
-}
-
-/**
- * Freezes an object and everything nested in it: the list is trusted data (its decimals feed
- * fee tiers and route vetting), so runtime code must not be able to change it.
- */
-function deepFreeze<T extends object>(value: T): T {
-  for (const nested of Object.values(value) as unknown[]) {
-    if (typeof nested === 'object' && nested !== null && !Object.isFrozen(nested)) {
-      deepFreeze(nested);
-    }
-  }
-  return Object.freeze(value);
+  /** For a `bridged` token without `bridge`: why, and the ward check that replaces it. */
+  bridgeExemption?: BridgeExemption;
 }
 
 /**
@@ -245,6 +248,12 @@ export const TOKEN_LIST: readonly CuratedToken[] = deepFreeze<CuratedToken[]>([
     name: 'Dai Stablecoin',
     decimals: 18,
     tags: ['stablecoin', 'bridged'],
+    bridgeExemption: {
+      reason:
+        "Bridged by Maker's custom Dai gateway, which has no l1Address()/l2Gateway(); the " +
+        'gateway is a ward (minter) of the token and its l1Dai() is L1 DAI',
+      ward: ARB_DAI_GATEWAY,
+    },
   },
   {
     chain: 'evm:42161',

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CHAINS, getChain, isStablecoin, isValidTokenAddress, knownDecimals } from './registry.js';
 import {
   ARB_STANDARD_GATEWAY,
+  ARB_DAI_GATEWAY,
   ARB_WETH_GATEWAY,
   type CuratedToken,
   OP_STANDARD_BRIDGE,
@@ -154,6 +155,31 @@ describe('bridge links', () => {
       expect(b.kind).toBe(t.chain === 'evm:8453' ? 'op-stack' : 'arbitrum');
       expect([OP_STANDARD_BRIDGE, ARB_STANDARD_GATEWAY, ARB_WETH_GATEWAY]).toContain(b.gateway);
     }
+  });
+  it('give every bridged-tagged token a checkable link or a written, checkable exemption', () => {
+    const bridged = TOKEN_LIST.filter((t) => t.tags?.includes('bridged'));
+    expect(bridged.length).toBeGreaterThan(0);
+    for (const t of bridged) {
+      const label = `${t.chain} ${t.symbol}`;
+      // Exactly one of the two: a link verify:tokens checks, or an exemption with a reason.
+      expect(Boolean(t.bridge) !== Boolean(t.bridgeExemption), label).toBe(true);
+      if (t.bridgeExemption) {
+        expect(t.bridgeExemption.reason.trim().length, label).toBeGreaterThan(20);
+        expect(t.bridgeExemption.ward, label).toMatch(/^0x[0-9a-f]{40}$/);
+      }
+    }
+    // Exemptions only make sense on bridged tokens.
+    for (const t of TOKEN_LIST.filter((x) => x.bridgeExemption)) {
+      expect(t.tags, `${t.chain} ${t.symbol}`).toContain('bridged');
+    }
+  });
+
+  it("exempts Arbitrum DAI: Maker's Dai gateway is a ward, not a standard gateway", () => {
+    const dai = TOKEN_LIST.find((t) => t.chain === 'evm:42161' && t.symbol === 'DAI');
+    expect(dai?.bridge).toBeUndefined();
+    expect(dai?.bridgeExemption?.ward).toBe(ARB_DAI_GATEWAY);
+    expect(ARB_DAI_GATEWAY).toBe('0x467194771dae2967aef3ecbedd3bf9a310c76c65');
+    expect(Object.isFrozen(dai?.bridgeExemption)).toBe(true);
   });
 });
 

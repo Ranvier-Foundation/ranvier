@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig, parseWebOrigins } from './config.js';
+import { kmsPinRequired } from './signer-setup.js';
 
 describe('loadConfig', () => {
   it('applies defaults', () => {
@@ -79,17 +80,74 @@ describe('loadConfig', () => {
             'https://app.ranvier.example,http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000',
         }).WEB_ORIGINS,
       ).toHaveLength(4);
-      // Outside production, http is accepted for any host.
-      expect(loadConfig({ WEB_ORIGINS: 'http://app.ranvier.example' }).WEB_ORIGINS).toEqual([
-        'http://app.ranvier.example',
-      ]);
+      // Outside production with testnets only, http is accepted for any host.
       expect(
-        loadConfig({ NODE_ENV: 'development', WEB_ORIGINS: 'http://192.168.1.5:3000' }).WEB_ORIGINS,
+        loadConfig({ ZEROX_CHAIN_IDS: '84532', WEB_ORIGINS: 'http://app.ranvier.example' })
+          .WEB_ORIGINS,
+      ).toEqual(['http://app.ranvier.example']);
+      expect(
+        loadConfig({
+          NODE_ENV: 'development',
+          ZEROX_CHAIN_IDS: '84532,11155111,421614,31337',
+          WEB_ORIGINS: 'http://192.168.1.5:3000',
+        }).WEB_ORIGINS,
       ).toEqual(['http://192.168.1.5:3000']);
       // Look-alike loopback names are not loopback.
       expect(() =>
         loadConfig({ NODE_ENV: 'production', WEB_ORIGINS: 'http://localhost.evil.example' }),
       ).toThrow(/https in production/);
+    });
+
+    describe('with a mainnet in ZEROX_CHAIN_IDS (same trigger as the KMS pin)', () => {
+      it('refuses a non-loopback http origin with NODE_ENV unset', () => {
+        for (const chains of [undefined, '1', '8453', '42161', '84532,8453', '999999']) {
+          const env = {
+            ...(chains === undefined ? {} : { ZEROX_CHAIN_IDS: chains }),
+            WEB_ORIGINS: 'http://app.example',
+          };
+          expect(() => loadConfig(env), String(chains)).toThrow(
+            /WEB_ORIGINS must use https in production or with a mainnet in ZEROX_CHAIN_IDS/,
+          );
+          expect(() => loadConfig({ ...env, NODE_ENV: 'development' }), String(chains)).toThrow(
+            /WEB_ORIGINS must use https/,
+          );
+        }
+        // The default ZEROX_CHAIN_IDS is mainnets (1, 8453, 42161).
+        expect(kmsPinRequired(loadConfig({}), undefined)).toBe(true);
+      });
+
+      it('still allows https and loopback http', () => {
+        expect(
+          loadConfig({
+            ZEROX_CHAIN_IDS: '1',
+            WEB_ORIGINS:
+              'https://app.example,http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000',
+          }).WEB_ORIGINS,
+        ).toHaveLength(4);
+      });
+
+      it('applies exactly when kmsPinRequired does', () => {
+        const cases: [string, string | undefined][] = [
+          ['84532', undefined],
+          ['84532,31337', 'development'],
+          ['84532', 'production'],
+          ['1', undefined],
+          ['8453,84532', 'test'],
+        ];
+        for (const [chains, nodeEnv] of cases) {
+          const base = { ZEROX_CHAIN_IDS: chains, ...(nodeEnv ? { NODE_ENV: nodeEnv } : {}) };
+          const pinned = kmsPinRequired(loadConfig(base), nodeEnv);
+          const httpAllowed = (() => {
+            try {
+              loadConfig({ ...base, WEB_ORIGINS: 'http://app.example' });
+              return true;
+            } catch {
+              return false;
+            }
+          })();
+          expect(httpAllowed, `${chains} ${String(nodeEnv)}`).toBe(!pinned);
+        }
+      });
     });
 
     it.each([
