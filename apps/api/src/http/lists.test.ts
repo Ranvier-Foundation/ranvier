@@ -122,6 +122,49 @@ describe('GET /v1/tokens', () => {
     });
   });
 
+  it('never serves verification-only fields (onchainSymbol, bridge, bridgeExemption)', async () => {
+    // The list entries carry them, so the absence below is the API's doing.
+    const usdt0Entry = TOKEN_LIST.find((t) => t.chain === 'evm:42161' && t.symbol === 'USDT0');
+    const baseDaiEntry = TOKEN_LIST.find((t) => t.chain === 'evm:8453' && t.symbol === 'DAI');
+    const arbDaiEntry = TOKEN_LIST.find((t) => t.chain === 'evm:42161' && t.symbol === 'DAI');
+    expect(usdt0Entry?.onchainSymbol).toBe('USD₮0');
+    expect(baseDaiEntry?.bridge).toBeDefined();
+    expect(arbDaiEntry?.bridgeExemption).toBeDefined();
+
+    const arb = await tokens('/v1/tokens?chain=evm:42161&limit=100');
+    expect(arb.find((t) => t.symbol === 'USDT0')).toEqual({
+      chain: 'evm:42161',
+      address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
+      symbol: 'USDT0',
+      name: 'USD₮0',
+      decimals: 6,
+      tags: ['stablecoin'],
+    });
+    expect(arb.find((t) => t.symbol === 'DAI')).toEqual({
+      chain: 'evm:42161',
+      address: '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',
+      symbol: 'DAI',
+      name: 'Dai Stablecoin',
+      decimals: 18,
+      tags: ['stablecoin', 'bridged'],
+    });
+    const base = await tokens('/v1/tokens?chain=evm:8453&limit=100');
+    expect(base.find((t) => t.symbol === 'DAI')).toEqual({
+      chain: 'evm:8453',
+      address: '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+      symbol: 'DAI',
+      name: 'Dai Stablecoin',
+      decimals: 18,
+      tags: ['stablecoin', 'bridged'],
+    });
+    for (const body of [JSON.stringify(arb), JSON.stringify(base)]) {
+      expect(body).not.toMatch(
+        /"(onchainSymbol|bridge|bridgeExemption|l1Address|gateway|ward|reason)":/,
+      );
+      expect(body).not.toMatch(/0x467194771dae2967aef3ecbedd3bf9a310c76c65/);
+    }
+  });
+
   it('serves decimals equal to the trusted knownDecimals for every listed token', async () => {
     let served = 0;
     for (const chain of ['evm:1', 'evm:8453', 'evm:42161'] as const) {

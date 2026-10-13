@@ -1,4 +1,5 @@
 import type { ChainFamily, ChainKey } from '@ranvier/types';
+import { deepFreeze } from './freeze.js';
 import { listedDecimals } from './tokens.js';
 
 export interface ChainConfig {
@@ -31,8 +32,12 @@ export interface ChainConfig {
  * Chains are added here as config, not code (spec section 5).
  * RPC URLs are environment config and live outside this package.
  * Stablecoin addresses are lowercased for EVM so lookups are case-insensitive.
+ *
+ * Deep-frozen at runtime, like `TOKEN_LIST` and `FEE_SCHEDULE`: `stablecoins` sets the 0.05%
+ * fee and `knownDecimals` is trusted input to fee tiers and route vetting, so no in-process code
+ * may change them (e.g. add WETH to `stablecoins`).
  */
-export const CHAINS: readonly ChainConfig[] = [
+export const CHAINS: readonly ChainConfig[] = deepFreeze<ChainConfig[]>([
   {
     key: 'evm:1',
     family: 'evm',
@@ -101,7 +106,7 @@ export const CHAINS: readonly ChainConfig[] = [
     explorer: 'https://solscan.io',
     defillama: 'solana',
   },
-];
+]);
 
 export const NATIVE = 'native';
 

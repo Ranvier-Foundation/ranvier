@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { mainnetRulesApply } from './mainnet-rules.js';
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 
@@ -143,14 +144,17 @@ const envSchema = z
     NODE_ENV: z.string().optional(),
   })
   .superRefine((env, ctx) => {
-    // In production a browser origin must be https, unless it is a loopback host.
-    if (env.NODE_ENV?.trim().toLowerCase() === 'production') {
+    // In production, or with any mainnet (non-testnet) chain quoted, a browser origin must be
+    // https unless it is a loopback host. Same trigger as the KMS pin (mainnet-rules.ts).
+    if (mainnetRulesApply(env.ZEROX_CHAIN_IDS, env.NODE_ENV)) {
       for (const origin of env.WEB_ORIGINS) {
         if (!isSecureOrLoopbackOrigin(origin)) {
           ctx.addIssue({
             code: 'custom',
             path: ['WEB_ORIGINS'],
-            message: `WEB_ORIGINS must use https in production (loopback excepted): ${origin}`,
+            message:
+              'WEB_ORIGINS must use https in production or with a mainnet in ZEROX_CHAIN_IDS ' +
+              `(loopback excepted): ${origin}`,
           });
         }
       }
