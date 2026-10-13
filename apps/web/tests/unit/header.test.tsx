@@ -48,10 +48,12 @@ describe('Swap CTA', () => {
 describe('Logo and panel', () => {
   it('renders the 32 px logo with the table geometry', () => {
     const html = renderToStaticMarkup(<Logo size={32} />);
-    expect(html).toContain('font-size:32px');
-    expect(html).toContain('width:14px;height:14px;margin-bottom:8px;margin-left:3px');
-    expect(html).toContain('left:0;top:8px;width:6px;height:6px');
-    expect(html).toContain('left:8px;top:0;width:6px;height:6px');
+    // The geometry is tokens + classes now (checked against the table in logo.test.tsx and as
+    // computed pixels in the e2e header tests); the markup carries no inline style.
+    expect(html).toContain('logo-32');
+    expect(html).toContain('logo-square-low');
+    expect(html).toContain('logo-square-high');
+    expect(html).not.toContain('style=');
   });
 
   it('swap panel starts empty with no invented numbers', () => {

@@ -74,3 +74,63 @@
 html:has(dialog[open]) {
   overflow: hidden;
 }
+
+/*
+ * Logo: geometry comes from the --logo-<size>-* tokens, selected by the size class, so the
+ * component carries no inline style.
+ */
+@layer components {
+  .logo-32 {
+    --logo-size: var(--logo-32-size);
+    --logo-square: var(--logo-32-square);
+    --logo-gap: var(--logo-32-gap);
+    --logo-box: var(--logo-32-box);
+    --logo-lift: var(--logo-32-lift);
+    --logo-space: var(--logo-32-space);
+  }
+  .logo-29 {
+    --logo-size: var(--logo-29-size);
+    --logo-square: var(--logo-29-square);
+    --logo-gap: var(--logo-29-gap);
+    --logo-box: var(--logo-29-box);
+    --logo-lift: var(--logo-29-lift);
+    --logo-space: var(--logo-29-space);
+  }
+  .logo-22 {
+    --logo-size: var(--logo-22-size);
+    --logo-square: var(--logo-22-square);
+    --logo-gap: var(--logo-22-gap);
+    --logo-box: var(--logo-22-box);
+    --logo-lift: var(--logo-22-lift);
+    --logo-space: var(--logo-22-space);
+  }
+  .logo-15 {
+    --logo-size: var(--logo-15-size);
+    --logo-square: var(--logo-15-square);
+    --logo-gap: var(--logo-15-gap);
+    --logo-box: var(--logo-15-box);
+    --logo-lift: var(--logo-15-lift);
+    --logo-space: var(--logo-15-space);
+  }
+  .logo {
+    font-size: var(--logo-size);
+  }
+  .logo-mark {
+    width: var(--logo-box);
+    height: var(--logo-box);
+    margin-bottom: var(--logo-lift);
+    margin-left: var(--logo-space);
+  }
+  .logo-square {
+    width: var(--logo-square);
+    height: var(--logo-square);
+  }
+  .logo-square-low {
+    left: 0;
+    top: calc(var(--logo-square) + var(--logo-gap));
+  }
+  .logo-square-high {
+    left: calc(var(--logo-square) + var(--logo-gap));
+    top: 0;
+  }
+}

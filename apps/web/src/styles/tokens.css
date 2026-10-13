@@ -175,3 +175,40 @@
   --focus-offset: 2px;
   --ring-width: 1.5px;
 }
+
+/*
+ * Logo geometry per reference size (docs/ui-guidelines.md section 4), in whole pixels. The
+ * Logo component only accepts these four sizes and picks its token set by class (globals.css),
+ * so it needs no inline style. tests/unit/logo.test.tsx checks every value against
+ * `logoGeometry()` so the two cannot drift. Box = 2 x square + gap.
+ */
+:root {
+  /* Web header, wordmark 32 px */
+  --logo-32-size: 32px;
+  --logo-32-square: 6px;
+  --logo-32-gap: 2px;
+  --logo-32-box: 14px;
+  --logo-32-lift: 8px;
+  --logo-32-space: 3px;
+  /* Mobile header, wordmark 29 px */
+  --logo-29-size: 29px;
+  --logo-29-square: 6px;
+  --logo-29-gap: 2px;
+  --logo-29-box: 14px;
+  --logo-29-lift: 6px;
+  --logo-29-space: 3px;
+  /* Payment card, wordmark 22 px */
+  --logo-22-size: 22px;
+  --logo-22-square: 4px;
+  --logo-22-gap: 1px;
+  --logo-22-box: 9px;
+  --logo-22-lift: 6px;
+  --logo-22-space: 2px;
+  /* "Secured by", wordmark 15 px */
+  --logo-15-size: 15px;
+  --logo-15-square: 3px;
+  --logo-15-gap: 1px;
+  --logo-15-box: 7px;
+  --logo-15-lift: 3px;
+  --logo-15-space: 2px;
+}
