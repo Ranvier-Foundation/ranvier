@@ -1,11 +1,13 @@
+import { request as httpRequest } from 'node:http';
 import type { APIResponse, Page } from '@playwright/test';
 import {
   apiOrigin,
   contentSecurityPolicy,
   staticSecurityHeaders,
 } from '../../src/lib/security/csp';
+import { hydrated } from './helpers';
 import { expect, test, type CspViolation } from './fixtures';
-import { NOT_FOUND_ROUTE, ROUTES } from './routes';
+import { NOT_FOUND_ROUTE, PROBE_PATHS, ROUTES, STATIC_MISS_PATHS } from './routes';
 import { DEFAULT_WALLET, installWallets } from './wallet-fixture';
 
 /**
@@ -15,6 +17,36 @@ import { DEFAULT_WALLET, installWallets } from './wallet-fixture';
  */
 
 const PAGES = [...ROUTES, NOT_FOUND_ROUTE];
+
+// A CSP failure must never be rescued by a retry (CI retries other tests once): it is either a
+// real hole or a real break. The shared fixture also fails any retry after a CSP violation.
+test.describe.configure({ retries: 0 });
+
+interface Raw {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+}
+
+/** One request with the path sent exactly as written (fetch would normalise `%2e%2e`). */
+function raw(
+  baseURL: string | undefined,
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<Raw> {
+  const { hostname, port } = new URL(baseURL ?? 'http://127.0.0.1:3100');
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ hostname, port, method, path, headers }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => (body += c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 const header = (page: Page) => page.getByRole('banner');
 
 function nonceOf(policy: string): string {
@@ -80,12 +112,82 @@ test.describe('header', () => {
   });
 });
 
+test.describe('matcher coverage', () => {
+  for (const path of PROBE_PATHS) {
+    test(`${path}: answered by the app under the policy`, async ({ baseURL }) => {
+      const res = await raw(baseURL, 'GET', path);
+      expect([200, 404]).toContain(res.status);
+      expect(String(res.headers['content-type'])).toContain('text/html');
+      const policy = String(res.headers['content-security-policy'] ?? '');
+      const nonce = nonceOf(policy);
+      expect(res.headers['content-security-policy-report-only']).toBeUndefined();
+      expect(String(res.headers['cache-control'])).toMatch(/private.*no-store|no-store.*private/);
+      const scripts = res.body.match(/<script\b[^>]*>/g) ?? [];
+      expect(scripts.length).toBeGreaterThan(0);
+      for (const tag of scripts) expect(tag).toContain(` nonce="${nonce}"`);
+      expect(res.body).not.toMatch(/<style\b/);
+    });
+  }
+
+  /** As Caddy or Cloudflare forward a request: TLS ends in front, plain HTTP to the app. */
+  const FORWARDED = { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' };
+  for (const path of ['/_global-error', '/_global-error.html', '/_global-error.rsc']) {
+    for (const [label, headers] of [
+      ['direct', {}],
+      ['behind a TLS proxy', FORWARDED],
+      ['behind a TLS proxy, RSC', { ...FORWARDED, rsc: '1' }],
+    ] as const) {
+      test(`${path} (${label}): plain 404 from the proxy, never the cacheable error page`, async ({
+        baseURL,
+      }) => {
+        const res = await raw(baseURL, 'GET', path, headers);
+        expect(res.status).toBe(404);
+        expect(res.body).toBe('Not Found');
+        expect(String(res.headers['content-type'])).toContain('text/plain');
+        expect(res.headers['cache-control']).toBe('no-store');
+        expect(res.headers['x-middleware-rewrite']).toBeUndefined();
+        nonceOf(String(res.headers['content-security-policy'] ?? ''));
+      });
+    }
+  }
+
+  test('/x.rsc behind a TLS proxy is an ordinary 404 under the policy', async ({ baseURL }) => {
+    const res = await raw(baseURL, 'GET', '/x.rsc', FORWARDED);
+    expect(res.status).toBe(404);
+    expect(res.headers['x-middleware-rewrite']).toBeUndefined();
+    expect(String(res.headers['cache-control'])).toContain('no-store');
+    nonceOf(String(res.headers['content-security-policy'] ?? ''));
+  });
+
+  for (const method of ['HEAD', 'POST']) {
+    test(`${method} /: policy and no-store`, async ({ baseURL }) => {
+      const res = await raw(baseURL, method, '/');
+      expect(res.status).toBe(200);
+      nonceOf(String(res.headers['content-security-policy'] ?? ''));
+      expect(String(res.headers['cache-control'])).toContain('no-store');
+    });
+  }
+
+  for (const path of STATIC_MISS_PATHS) {
+    test(`${path}: build-asset miss is a plain-text 404 (no HTML, so no policy needed)`, async ({
+      baseURL,
+    }) => {
+      const res = await raw(baseURL, 'GET', path);
+      expect(res.status).toBe(404);
+      expect(String(res.headers['content-type'])).toContain('text/plain');
+      expect(res.body).not.toMatch(/<html|<script/i);
+      expect(res.headers['content-security-policy']).toBeUndefined();
+    });
+  }
+});
+
 test.describe('no violations', () => {
   for (const route of PAGES) {
     for (const width of [1440, 390]) {
       test(`${route} at ${width}`, async ({ page, csp }) => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(route);
+        await hydrated(page);
         await page.evaluate(() => document.fonts.ready);
         // Hydrated: the header's client components respond.
         const more = header(page).getByRole('button', { name: 'More' });
@@ -100,6 +202,7 @@ test.describe('no violations', () => {
   test('connect dialog, connected wallet, wallet and network menus', async ({ page, csp }) => {
     await installWallets(page);
     await page.goto('/');
+    await hydrated(page);
     await header(page).getByRole('button', { name: 'Connect wallet' }).click();
     const dialog = page.getByRole('dialog', { name: 'Connect wallet' });
     await expect(dialog).toBeVisible();
@@ -118,6 +221,7 @@ test.describe('no violations', () => {
     await expect(network).toHaveAttribute('aria-expanded', 'true');
     // Reload: the persisted connection comes back under the same policy.
     await page.reload();
+    await hydrated(page);
     await expect(pill).toBeVisible();
     expect(csp.violations).toEqual([]);
     expect(csp.console).toEqual([]);
@@ -125,6 +229,7 @@ test.describe('no violations', () => {
 
   test('client-side navigation loads a new chunk under strict-dynamic', async ({ page, csp }) => {
     await page.goto(NOT_FOUND_ROUTE);
+    await hydrated(page);
     await page.evaluate(() => {
       (window as unknown as { __sameDocument?: boolean }).__sameDocument = true;
     });
@@ -182,6 +287,7 @@ test.describe('injected markup is refused', () => {
     });
 
     await page.goto('/');
+    await hydrated(page);
     expect(gadget).not.toBe('');
     await page.locator('#p-js').click();
     // The app itself still runs under the policy.

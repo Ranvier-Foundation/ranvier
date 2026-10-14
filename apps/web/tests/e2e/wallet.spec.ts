@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { getAddress } from 'viem';
-import { box, gotoSwap, RGB, styles } from './helpers';
+import { box, gotoSwap, hydrated, RGB, styles } from './helpers';
 import {
   ACCOUNT_A,
   ACCOUNT_B,
@@ -150,6 +150,7 @@ test.describe('connect flow', () => {
     await gotoSwap(page, 1440, 900);
     await connect(page);
     await page.reload();
+    await hydrated(page);
     await expect(walletPill(page)).toBeVisible();
     const html = await (await request.get('/')).text();
     expect(html).not.toMatch(/0x[0-9a-fA-F]{40}/);
@@ -170,6 +171,7 @@ test.describe('connect flow', () => {
       page.getByRole('main').getByRole('button', { name: 'Connect wallet' }),
     ).toBeVisible();
     await page.reload();
+    await hydrated(page);
     await expect(connectButton(page)).toBeVisible();
     await expect(walletPill(page)).toHaveCount(0);
   });
@@ -272,14 +274,11 @@ test.describe('connect flow', () => {
     page,
   }) => {
     await gotoSwap(page, 1440, 900);
+    // gotoSwap waited for hydration, so the button has its handler: one Enter opens the dialog.
+    await connectButton(page).focus();
+    await page.keyboard.press('Enter');
     const d = dialog(page);
-    // Enter before hydration does nothing (no handler yet); under parallel load that race showed
-    // up about once in 300 runs, on main too. Retry until the dialog opens.
-    await expect(async () => {
-      await connectButton(page).focus();
-      await page.keyboard.press('Enter');
-      await expect(d).toBeVisible({ timeout: 1000 });
-    }).toPass();
+    await expect(d).toBeVisible();
     const inside = () =>
       page.evaluate(
         () => document.querySelector('dialog')?.contains(document.activeElement) ?? false,

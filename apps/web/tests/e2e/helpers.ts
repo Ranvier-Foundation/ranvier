@@ -52,8 +52,14 @@ export const RGB = {
   white: 'rgb(255, 255, 255)',
 } as const;
 
+/** Waits until React has hydrated the page (WalletProviders sets `data-hydrated` on mount). */
+export async function hydrated(page: Page) {
+  await page.locator('html[data-hydrated="true"]').waitFor({ state: 'attached' });
+}
+
 export async function gotoSwap(page: Page, width: number, height: number) {
   await page.setViewportSize({ width, height });
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
+  await hydrated(page);
 }

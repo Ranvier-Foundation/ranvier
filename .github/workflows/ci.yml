@@ -38,8 +38,9 @@ jobs:
       - run: pnpm --filter @ranvier/web exec playwright install --with-deps chromium
       # Conformance, accessibility, keyboard and reduced-motion tests against the production build.
       - run: pnpm --filter @ranvier/web e2e
-      # Strict CSP on the deployable artefact (standalone server.js), enforcing and with
-      # CSP_REPORT_ONLY=1: per-request nonce on every script, no unsafe-*, no-store (ADR 0008).
+      # Strict CSP on the deployable artefact (standalone server.js), ADR 0008: enforcing (hostile
+      # runtime env must change nothing), Report-Only only with RANVIER_ENV=staging, a stray
+      # CSP_REPORT_ONLY=1 ignored; every page and matcher probe path gets a fresh nonce and no-store.
       - run: pnpm --filter @ranvier/web check:headers
 
   contracts:

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
+import { hydrated } from './helpers';
 import { expect, test } from './fixtures';
 import { NOT_FOUND_ROUTE } from './routes';
 import { installWallets, DEFAULT_WALLET } from './wallet-fixture';
@@ -96,6 +97,7 @@ for (const { width, height } of WIDTHS) {
     test('swap screen', async ({ page }) => {
       await watch(page);
       await page.goto('/');
+      await hydrated(page);
       await page.evaluate(() => document.fonts.ready);
       await expectNoInlineStyles(page);
     });
@@ -103,6 +105,7 @@ for (const { width, height } of WIDTHS) {
     test('unknown route is a 404 with no inline styles', async ({ page }) => {
       await watch(page);
       const response = await page.goto(NOT_FOUND_ROUTE);
+      await hydrated(page);
       expect(response?.status()).toBe(404);
       await expect(page.getByRole('heading', { level: 1 })).toHaveText(
         'This page is not built yet',
@@ -114,6 +117,7 @@ for (const { width, height } of WIDTHS) {
 
     test('404 page passes the axe scan and its link is a 44 px target', async ({ page }) => {
       await page.goto(NOT_FOUND_ROUTE);
+      await hydrated(page);
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'])
         .analyze();
@@ -125,6 +129,7 @@ for (const { width, height } of WIDTHS) {
     test('menus open', async ({ page }) => {
       await watch(page);
       await page.goto('/');
+      await hydrated(page);
       const more = page.getByRole('banner').getByRole('button', { name: 'More' });
       await more.click();
       await expect(more).toHaveAttribute('aria-expanded', 'true');
@@ -135,6 +140,7 @@ for (const { width, height } of WIDTHS) {
       await watch(page);
       await installWallets(page);
       await page.goto('/');
+      await hydrated(page);
       await page.getByRole('banner').getByRole('button', { name: 'Connect wallet' }).click();
       const dialog = page.getByRole('dialog', { name: 'Connect wallet' });
       await expect(dialog).toBeVisible();
