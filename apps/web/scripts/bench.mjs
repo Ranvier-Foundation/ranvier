@@ -6,7 +6,7 @@
  * host is named explicitly with --allow-host (it must equal the URL's host): load-test only hosts
  * you operate.
  */
-/* global process, console, fetch, performance */
+/* global process, console, fetch, performance, URL */
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
 const args = process.argv.slice(2);
 const allowed = [];
