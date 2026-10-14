@@ -32,14 +32,14 @@ RPC_URLS_EVM_42161=https://<provider-1 Arbitrum URL>,https://<provider-2 Arbitru
 - Startup fails on an empty entry, a duplicate (compared normalised: `https://a` and `https://A/` are one), a fragment (even a bare `#`), a non-URL, a non-https URL, more than 8 URLs, or a variable named `RPC_URLS_EVM_<not a chain ID>`. The error names the variable and the entry number, never the value.
 - A variable for a chain that is not served, or has no token list, is ignored and named in a warning.
 - An unset variable falls back to the public development endpoints, with this startup warning (no URLs): `balance reads use PUBLIC development RPC endpoints for these chains: never in production`.
-- Tuning (defaults are fine): `RPC_REQUEST_TIMEOUT_MS` (1500, per request per endpoint), `RPC_RANK_INTERVAL_MS` (30000; 0 turns ranking off), `BALANCES_DEADLINE_MS` (3000), `BALANCES_CACHE_TTL_MS` (3000).
+- Tuning (defaults are fine): `RPC_REQUEST_TIMEOUT_MS` (1500, per request per endpoint, response body included: an endpoint that stalls mid-body fails over after this), `RPC_RANK_INTERVAL_MS` (30000; 0 turns ranking off), `BALANCES_DEADLINE_MS` (3000), `BALANCES_CACHE_TTL_MS` (3000).
 
 The values are secrets. Keep them in the secret store of the deployment, never in the repository, a ticket, a chat or a log. Do not paste them into a shell history on a shared host.
 
 ## API host requirements
 
 - **Egress firewall.** The API host may open outbound connections only to the RPC providers, the other upstreams it needs (0x, DefiLlama, AWS KMS) and DNS/NTP. Deny at least: `169.254.0.0/16` (link-local, including the cloud metadata service at `169.254.169.254`), the RFC 1918 ranges `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16`, `100.64.0.0/10`, loopback `127.0.0.0/8` and `::1` (except a local node explicitly allowed in development), IPv6 link-local `fe80::/10` and unique-local `fc00::/7`, and any other metadata or internal address of the hosting provider. RPC URLs come from the environment only, never from a request, but a mistyped or compromised provider hostname must not reach internal services.
-- **Redirects are refused by design.** Every RPC request is sent with `redirect: 'error'`; a provider answering 3xx counts as failed and is logged as `RPC endpoint answered with a redirect; refused` with its label. Configure the final URL, never one that redirects.
+- **Redirects are refused by design.** Every outbound request of the API (RPC, 0x, DefiLlama) is sent with `redirect: 'error'`; an RPC provider answering 3xx counts as failed and is logged as `RPC endpoint answered with a redirect; refused` with its label. Configure the final URL, never one that redirects.
 - **NTP.** The host clock must be synchronised: a block whose timestamp is more than 60 s ahead of the host clock is refused (`block_in_future`), so a host clock that runs late refuses every read.
 
 ## Release check
