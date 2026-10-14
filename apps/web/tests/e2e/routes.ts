@@ -21,6 +21,7 @@ export const UNBUILT_ROUTES: ReadonlySet<string> = new Set([
  * (a matcher that skipped dotted paths or all of /_next/ passed every other test). Each is answered
  * by the app (HTML: a 404, or `/` for the dot-segment), so each needs the CSP and `no-store`.
  * Sent byte for byte (no URL normalisation) by csp.spec.ts and scripts/check-headers.mjs.
+ * (`/_global-error` is not here: the proxy answers it with a plain-text 404, tested on its own.)
  */
 export const PROBE_PATHS: readonly string[] = [
   '/robots.txt',
@@ -31,7 +32,6 @@ export const PROBE_PATHS: readonly string[] = [
   '/a%2fb',
   '/_next/data/x/y.json',
   '/api/x',
-  '/_global-error',
   '/_not-found',
 ];
 

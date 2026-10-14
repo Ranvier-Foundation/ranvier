@@ -36,6 +36,14 @@ const STATIC = [
   'cross-origin-resource-policy',
 ];
 const NONCE = /script-src 'nonce-([A-Za-z0-9+/]{22}==)' 'strict-dynamic'/;
+/**
+ * As Caddy or Cloudflare forward a request: TLS terminated in front, plain HTTP to the app. The
+ * proxy must answer these paths itself; a rewrite built from request.url once turned them into an
+ * external TLS fetch to our own plain-HTTP port (500, EPROTO in the log, a socket per request).
+ */
+const FORWARDED = { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' };
+const GLOBAL_ERROR_PATHS = ['/_global-error', '/_global-error.html', '/_global-error.rsc'];
+const FORWARDED_PROBES = [...GLOBAL_ERROR_PATHS, '/x.rsc', '/'];
 const HOSTILE = {
   NEXT_PUBLIC_API_URL: "https://x'y",
   RANVIER_BUILD_API_ORIGIN: 'https://evil.example',
@@ -58,9 +66,9 @@ function freePort() {
 }
 
 /** One request, path sent exactly as written (fetch would normalise `%2e%2e`). */
-function raw(port, method, path) {
+function raw(port, method, path, headers = {}) {
   return new Promise((done, fail) => {
-    const req = request({ hostname: '127.0.0.1', port, method, path }, (res) => {
+    const req = request({ hostname: '127.0.0.1', port, method, path, headers }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c) => (body += c));
@@ -145,11 +153,28 @@ async function checkMode(port, label, reportOnly) {
     check(NONCE.test(res.headers[name] ?? ''), `${where}: no policy`);
     check(/no-store/.test(res.headers['cache-control'] ?? ''), `${where}: not no-store`);
   }
-  const globalError = await raw(port, 'GET', '/_global-error');
-  check(
-    !/s-maxage/.test(globalError.headers['cache-control'] ?? ''),
-    `${label} /_global-error is cacheable`,
-  );
+  for (const forwarded of [{}, FORWARDED]) {
+    for (const path of FORWARDED_PROBES) {
+      for (const extra of [{}, { rsc: '1' }]) {
+        const res = await raw(port, 'GET', path, { ...forwarded, ...extra });
+        const where = `${label} GET ${path} ${JSON.stringify({ ...forwarded, ...extra })}`;
+        check(res.status !== 500, `${where}: status 500 ${res.body.slice(0, 80)}`);
+        check(res.headers['x-middleware-rewrite'] === undefined, `${where}: leaks a rewrite`);
+        check(NONCE.test(res.headers[name] ?? ''), `${where}: no policy`);
+        if (res.status >= 300 && res.status < 400) {
+          // Next's RSC cache-busting redirect (`rsc: 1` without router state): no body, no page.
+          check(Boolean(res.headers.location), `${where}: redirect without Location`);
+          check(!/<html|<script/i.test(res.body), `${where}: redirect body is HTML`);
+          continue;
+        }
+        check(/no-store/.test(res.headers['cache-control'] ?? ''), `${where}: not no-store`);
+        if (GLOBAL_ERROR_PATHS.includes(path)) {
+          check(res.status === 404, `${where}: status ${res.status}, expected 404`);
+          check(!/<html|<script/i.test(res.body), `${where}: body is HTML`);
+        }
+      }
+    }
+  }
   for (const path of STATIC_MISS_PATHS) {
     const res = await raw(port, 'GET', path);
     const where = `${label} GET ${path}`;

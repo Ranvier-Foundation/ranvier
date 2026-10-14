@@ -29,10 +29,15 @@ interface Raw {
 }
 
 /** One request with the path sent exactly as written (fetch would normalise `%2e%2e`). */
-function raw(baseURL: string | undefined, method: string, path: string): Promise<Raw> {
+function raw(
+  baseURL: string | undefined,
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<Raw> {
   const { hostname, port } = new URL(baseURL ?? 'http://127.0.0.1:3100');
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ hostname, port, method, path }, (res) => {
+    const req = httpRequest({ hostname, port, method, path, headers }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c: string) => (body += c));
@@ -124,12 +129,34 @@ test.describe('matcher coverage', () => {
     });
   }
 
-  test('/_global-error by URL is the app 404, not the cacheable prerendered error page', async ({
-    baseURL,
-  }) => {
-    const res = await raw(baseURL, 'GET', '/_global-error');
+  /** As Caddy or Cloudflare forward a request: TLS ends in front, plain HTTP to the app. */
+  const FORWARDED = { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' };
+  for (const path of ['/_global-error', '/_global-error.html', '/_global-error.rsc']) {
+    for (const [label, headers] of [
+      ['direct', {}],
+      ['behind a TLS proxy', FORWARDED],
+      ['behind a TLS proxy, RSC', { ...FORWARDED, rsc: '1' }],
+    ] as const) {
+      test(`${path} (${label}): plain 404 from the proxy, never the cacheable error page`, async ({
+        baseURL,
+      }) => {
+        const res = await raw(baseURL, 'GET', path, headers);
+        expect(res.status).toBe(404);
+        expect(res.body).toBe('Not Found');
+        expect(String(res.headers['content-type'])).toContain('text/plain');
+        expect(res.headers['cache-control']).toBe('no-store');
+        expect(res.headers['x-middleware-rewrite']).toBeUndefined();
+        nonceOf(String(res.headers['content-security-policy'] ?? ''));
+      });
+    }
+  }
+
+  test('/x.rsc behind a TLS proxy is an ordinary 404 under the policy', async ({ baseURL }) => {
+    const res = await raw(baseURL, 'GET', '/x.rsc', FORWARDED);
     expect(res.status).toBe(404);
-    expect(String(res.headers['cache-control'])).not.toContain('s-maxage');
+    expect(res.headers['x-middleware-rewrite']).toBeUndefined();
+    expect(String(res.headers['cache-control'])).toContain('no-store');
+    nonceOf(String(res.headers['content-security-policy'] ?? ''));
   });
 
   for (const method of ['HEAD', 'POST']) {

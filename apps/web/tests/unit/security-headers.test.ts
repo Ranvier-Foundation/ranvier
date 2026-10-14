@@ -233,25 +233,31 @@ describe('proxy', () => {
     );
   });
 
-  it('a direct request to /_global-error is rewritten to the 404, under the policy', async () => {
+  it('a direct request to /_global-error gets a plain 404 from the proxy, no rewrite', async () => {
     const proxy = await loadProxy();
+    const forwardedProto = { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' };
     for (const path of [
       '/_global-error',
       '/_global-error/',
       '/_global-error.html',
       '/_global-error.rsc',
     ]) {
-      const res = proxy(request(path));
-      expect(new URL(res.headers.get('x-middleware-rewrite') ?? 'http://x/').pathname).toBe(
-        '/_not-found',
-      );
-      expect(res.headers.get('content-security-policy')).toMatch(/^default-src 'none'/);
-      expect(forwarded(res, 'content-security-policy')).toBe(
-        res.headers.get('content-security-policy'),
-      );
+      for (const headers of [{}, forwardedProto, { ...forwardedProto, rsc: '1' }]) {
+        const res = proxy(request(path, headers));
+        expect(res.status).toBe(404);
+        expect(await res.text()).toBe('Not Found');
+        expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+        expect(res.headers.get('cache-control')).toBe('no-store');
+        // Answered here: nothing is rewritten, forwarded or fetched.
+        expect(res.headers.get('x-middleware-rewrite')).toBeNull();
+        expect(res.headers.get('x-middleware-next')).toBeNull();
+        expect(res.headers.get('content-security-policy')).toMatch(/^default-src 'none'/);
+      }
     }
-    for (const path of ['/_global-errors', '/x/_global-error', '/']) {
-      expect(proxy(request(path)).headers.get('x-middleware-rewrite')).toBeNull();
+    for (const path of ['/_global-errors', '/x/_global-error', '/', '/x.rsc']) {
+      const res = proxy(request(path, forwardedProto));
+      expect(res.headers.get('x-middleware-next')).toBe('1');
+      expect(res.headers.get('x-middleware-rewrite')).toBeNull();
     }
   });
 

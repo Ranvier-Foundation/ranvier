@@ -15,8 +15,11 @@ const DELIVERY = cspDelivery({
 
 /**
  * Next's built-in `/_global-error` route is reachable by URL and is prerendered (cacheable, no
- * nonces). It is only meant to render inside a failing request, never by address, so a direct
- * request gets the app's 404 instead, under the same policy.
+ * nonces). It is only meant to render inside a failing request, never by address, so the proxy
+ * answers a direct request itself: a plain-text 404, never cached. Not a rewrite: a rewrite URL
+ * built from request.url uses the forwarded scheme and host (https behind Caddy or Cloudflare),
+ * which Next treats as an external URL and fetches over TLS from our own plain-HTTP port (a 500
+ * and an outbound socket per request).
  */
 const GLOBAL_ERROR_ROUTE = /^\/_global-error(?:[/.]|$)/;
 
@@ -33,10 +36,13 @@ export function proxy(request: NextRequest) {
   forwarded.delete('content-security-policy');
   forwarded.delete('content-security-policy-report-only');
   forwarded.set(name, policy);
-  const init = { request: { headers: forwarded } };
   const response = GLOBAL_ERROR_ROUTE.test(request.nextUrl.pathname)
-    ? NextResponse.rewrite(new URL('/_not-found', request.url), init)
-    : NextResponse.next(init);
+    ? new NextResponse('Not Found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+      })
+    : NextResponse.next({ request: { headers: forwarded } });
+  // On the 404 too: plain text is not HTML, so the policy is only defence in depth there.
   response.headers.set(name, policy);
   return response;
 }
