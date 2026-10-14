@@ -38,6 +38,9 @@ import {
  * - All balances come from one block: the block number is read first, then one Multicall3
  *   `aggregate3` call at that block reads the chain ID, the block timestamp, the native balance
  *   and every `balanceOf`. Per-call failures are allowed, so a reverting token is null.
+ * - Redirects are never followed (`redirect: 'error'` on every request): a 3xx would otherwise
+ *   re-send the request, owner address included, to a host nobody configured, and serve its
+ *   answer without a chain ID proof.
  * - Nothing it logs or throws contains a URL, provider text or the owner address: errors are
  *   reduced to a class name, an HTTP status and a JSON-RPC code.
  */
@@ -107,6 +110,13 @@ export interface ViemChainReaderOptions {
   maxRewindSeconds?: number;
   /** The newest block seen is forgotten after this, so one bad answer cannot block a chain. */
   highWaterTtlMs?: number;
+  /**
+   * An endpoint that answers a read for another chain is dropped for this long, doubled on
+   * every repeat (default 60 s), up to `maxMismatchPenaltyMs` (default 30 min). Then it must
+   * prove its chain again.
+   */
+  mismatchPenaltyMs?: number;
+  maxMismatchPenaltyMs?: number;
   /** Largest RPC response body (default 256 KiB). */
   maxResponseBytes?: number;
   /** Chains to read with Multicall3 (default `MULTICALL3_CHAINS`). */
@@ -116,7 +126,12 @@ export interface ViemChainReaderOptions {
   log?: ReaderLog;
 }
 
-type EndpointStatus = 'pending' | 'verified' | 'mismatch';
+/**
+ * `pending`: not proved yet (or unreachable); `verified`: serves reads; `mismatch`: reported
+ * another chain to `eth_chainId`, dropped until restart; `penalized`: answered a read for
+ * another chain, dropped until `penaltyUntil`, then proved again.
+ */
+type EndpointStatus = 'pending' | 'verified' | 'mismatch' | 'penalized';
 
 interface Endpoint {
   readonly url: string;
@@ -125,6 +140,15 @@ interface Endpoint {
   /** When the chain ID was last asked (ms); 0 = never. */
   checkedAt: number;
   checking?: Promise<void> | undefined;
+  /** Reads answered for another chain so far. */
+  strikes: number;
+  penaltyUntil: number;
+}
+
+/** Per read: the caller's signal, and which endpoint answered each JSON-RPC method. */
+interface ReadContext {
+  signal: AbortSignal;
+  served: { method: string; ep: Endpoint }[];
 }
 
 interface HighWater {
@@ -201,6 +225,26 @@ class EndpointNotVerifiedError extends Error {
   override readonly name = 'EndpointNotVerifiedError';
 }
 
+/** Thrown into viem when an endpoint answers with a redirect; viem moves to the next one. */
+class EndpointRedirectError extends Error {
+  override readonly name = 'EndpointRedirectError';
+  constructor() {
+    super('redirect refused');
+  }
+}
+
+/** Node's fetch with `redirect: 'error'` fails a 3xx with this cause. */
+function isRedirectError(err: unknown): boolean {
+  const cause = (err as { cause?: { message?: unknown } } | null)?.cause;
+  return err instanceof TypeError && /redirect/i.test(String(cause?.message));
+}
+
+/** The JSON-RPC method of a request body viem built (a single request, never a batch). */
+function methodOf(init: RequestInit | undefined): string {
+  const body = JSON.parse(String(init?.body)) as { method?: unknown };
+  return String(body.method);
+}
+
 export class ViemChainReader implements ChainReader {
   private readonly chains = new Map<number, ChainState>();
   private readonly requestTimeoutMs: number;
@@ -210,12 +254,14 @@ export class ViemChainReader implements ChainReader {
   private readonly maxClockSkewSeconds: bigint;
   private readonly maxRewindSeconds: bigint;
   private readonly highWaterTtlMs: number;
+  private readonly mismatchPenaltyMs: number;
+  private readonly maxMismatchPenaltyMs: number;
   private readonly maxResponseBytes: number;
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
   private readonly log: ReaderLog | undefined;
-  /** The caller's AbortSignal, visible to every fetch made on its behalf (through viem). */
-  private readonly callerSignal = new AsyncLocalStorage<AbortSignal>();
+  /** The read in progress, visible to every fetch made on its behalf (through viem). */
+  private readonly context = new AsyncLocalStorage<ReadContext>();
 
   constructor(opts: ViemChainReaderOptions) {
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 1_500;
@@ -225,6 +271,8 @@ export class ViemChainReader implements ChainReader {
     this.maxClockSkewSeconds = BigInt(opts.maxClockSkewSeconds ?? 60);
     this.maxRewindSeconds = BigInt(opts.maxRewindSeconds ?? 30);
     this.highWaterTtlMs = opts.highWaterTtlMs ?? 60_000;
+    this.mismatchPenaltyMs = opts.mismatchPenaltyMs ?? 60_000;
+    this.maxMismatchPenaltyMs = opts.maxMismatchPenaltyMs ?? 30 * 60_000;
     this.maxResponseBytes = opts.maxResponseBytes ?? 256 * 1024;
     this.fetch = opts.fetch ?? globalThis.fetch;
     this.now = opts.now ?? Date.now;
@@ -238,10 +286,12 @@ export class ViemChainReader implements ChainReader {
         label: c.label,
         status: 'pending',
         checkedAt: 0,
+        strikes: 0,
+        penaltyUntil: 0,
       }));
       const transports = endpoints.map((ep) =>
         http(ep.url, {
-          fetchFn: this.fetchFor(ep),
+          fetchFn: this.endpointFetch(chainId, ep, true),
           timeout: this.requestTimeoutMs,
           retryCount: 0,
           maxResponseBodySize: this.maxResponseBytes,
@@ -292,8 +342,9 @@ export class ViemChainReader implements ChainReader {
       void this.verifyPending(chain, false);
       throw new ChainReadError('rpc_unavailable', 'no_verified_endpoint');
     }
+    const ctx: ReadContext = { signal, served: [] };
     try {
-      return await this.callerSignal.run(signal, () => this.read(chain, request, signal));
+      return await this.context.run(ctx, () => this.read(chain, request, ctx));
     } catch (err: unknown) {
       throw this.failure(chain, err, signal);
     }
@@ -302,8 +353,9 @@ export class ViemChainReader implements ChainReader {
   private async read(
     chain: ChainState,
     request: BalancesRequest,
-    signal: AbortSignal,
+    ctx: ReadContext,
   ): Promise<BalancesRead> {
+    const signal = ctx.signal;
     const blockNumber = quantity(
       await chain.client.request({ method: 'eth_blockNumber' }, { signal }),
       'malformed_block_number',
@@ -315,15 +367,12 @@ export class ViemChainReader implements ChainReader {
       ? await this.readMulticall(chain, request, blockNumber, signal)
       : await this.readIndividually(chain, request, blockNumber, signal);
     if (result.chainId !== BigInt(chain.chainId)) {
-      // Some endpoint answered for another chain: re-check them all, serve nothing from this.
-      this.log?.error({ chainId: chain.chainId }, 'RPC answered a balance read for another chain');
-      for (const ep of chain.endpoints) {
-        if (ep.status === 'verified') {
-          ep.status = 'pending';
-          ep.checkedAt = 0;
-        }
+      // The endpoint that answered the chain ID (the eth_call itself with Multicall3) serves
+      // another chain: drop it for a while. The others keep serving.
+      const method = chain.multicall ? 'eth_call' : 'eth_chainId';
+      for (const { ep } of ctx.served.filter((s) => s.method === method).slice(-1)) {
+        this.penalize(chain, ep);
       }
-      void this.verifyPending(chain, true);
       throw new ChainReadError('rpc_unavailable', 'chain_id_mismatch');
     }
     this.checkBlock(chain, blockNumber, result.timestamp);
@@ -408,9 +457,12 @@ export class ViemChainReader implements ChainReader {
   }
 
   /**
-   * Without Multicall3: one request per balance, all pinned to `blockNumber`, so the result is
-   * still one consistent block, at the cost of N + 3 requests. A reverting token is null; any
-   * other failure fails the read (an outage must not look like empty balances).
+   * Without Multicall3: one request per balance, all pinned to `blockNumber`, at the cost of
+   * N + 3 requests. Weaker than one call: each request may be answered by a different endpoint,
+   * so the chain ID and block checks cover the endpoint that answered them, not necessarily the
+   * ones that answered the balances (proved endpoints only, all pinned to the same block). A
+   * reverting token is null; any other failure fails the read (an outage must not look like
+   * empty balances).
    */
   private async readIndividually(
     chain: ChainState,
@@ -491,27 +543,62 @@ export class ViemChainReader implements ChainReader {
     return new ChainReadError(code, code === 'timeout' ? 'rpc_timeout' : 'rpc_error');
   }
 
-  /** The fetch every endpoint uses: refuses until verified, and honours the caller's signal. */
-  private fetchFor(ep: Endpoint): typeof fetch {
-    return (input, init) => {
-      if (ep.status !== 'verified') return Promise.reject(new EndpointNotVerifiedError());
-      return this.fetch(input, this.withCallerSignal(init));
+  /** Drops an endpoint that answered a read for another chain, with an exponential penalty. */
+  private penalize(chain: ChainState, ep: Endpoint): void {
+    ep.strikes += 1;
+    const penaltyMs = Math.min(
+      this.mismatchPenaltyMs * 2 ** (ep.strikes - 1),
+      this.maxMismatchPenaltyMs,
+    );
+    ep.status = 'penalized';
+    ep.penaltyUntil = this.now() + penaltyMs;
+    this.log?.error(
+      { chainId: chain.chainId, endpoint: ep.label, penaltyMs },
+      'RPC answered a balance read for another chain; endpoint dropped for a while',
+    );
+  }
+
+  /**
+   * The fetch of one endpoint. Never follows a redirect. With `gate` (reads, ranking pings) it
+   * refuses until the endpoint has proved its chain, honours the caller's signal and records
+   * which endpoint answered which method.
+   */
+  private endpointFetch(chainId: number, ep: Endpoint, gate: boolean): typeof fetch {
+    return async (input, init) => {
+      if (gate && ep.status !== 'verified') throw new EndpointNotVerifiedError();
+      const ctx = gate ? this.context.getStore() : undefined;
+      const caller = ctx?.signal;
+      const signal =
+        caller && init?.signal ? AbortSignal.any([caller, init.signal]) : (caller ?? init?.signal);
+      let res: Response;
+      try {
+        res = await this.fetch(input, { ...init, signal: signal ?? null, redirect: 'error' });
+      } catch (err: unknown) {
+        if (isRedirectError(err)) throw this.redirected(chainId, ep);
+        throw err;
+      }
+      // A fetch that ignored `redirect: 'error'` (defence in depth): a 3xx is still refused.
+      if (res.status >= 300 && res.status < 400) throw this.redirected(chainId, ep);
+      ctx?.served.push({ method: methodOf(init), ep });
+      return res;
     };
   }
 
-  private withCallerSignal(init: RequestInit | undefined): RequestInit | undefined {
-    const caller = this.callerSignal.getStore();
-    if (!caller) return init;
-    const signal = init?.signal ? AbortSignal.any([caller, init.signal]) : caller;
-    return { ...init, signal };
+  private redirected(chainId: number, ep: Endpoint): EndpointRedirectError {
+    this.log?.warn(
+      { chainId, endpoint: ep.label, reason: 'redirect' },
+      'RPC endpoint answered with a redirect; refused',
+    );
+    return new EndpointRedirectError();
   }
 
   private verifyPending(chain: ChainState, force: boolean): Promise<void> {
+    const now = this.now();
     const due = chain.endpoints.filter(
       (ep) =>
-        ep.status === 'pending' &&
+        (ep.status === 'pending' || (ep.status === 'penalized' && now >= ep.penaltyUntil)) &&
         !ep.checking &&
-        (force || ep.checkedAt === 0 || this.now() - ep.checkedAt >= this.reverifyAfterMs),
+        (force || ep.checkedAt === 0 || now - ep.checkedAt >= this.reverifyAfterMs),
     );
     return Promise.all(
       due.map((ep) => {
@@ -526,7 +613,7 @@ export class ViemChainReader implements ChainReader {
     ep.checkedAt = this.now();
     const client = createPublicClient({
       transport: http(ep.url, {
-        fetchFn: (input, init) => this.fetch(input, init),
+        fetchFn: this.endpointFetch(chain.chainId, ep, false),
         timeout: this.verifyTimeoutMs,
         retryCount: 0,
         maxResponseBodySize: 4 * 1024,

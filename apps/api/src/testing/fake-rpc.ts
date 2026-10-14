@@ -25,7 +25,15 @@ const MC_ABI = parseAbi([
   'function getEthBalance(address addr) view returns (uint256 balance)',
 ]);
 
-export type FakeMode = 'ok' | 'down' | 'http500' | 'http429' | 'hang' | 'revert-call';
+export type FakeMode =
+  | 'ok'
+  | 'down'
+  | 'http500'
+  | 'http429'
+  | 'hang'
+  | 'revert-call'
+  /** A 302 that a fetch did not follow (the reader must still refuse it). */
+  | 'redirect';
 
 /** A token's answer: a balance, a revert, or raw return data. */
 export type TokenAnswer = bigint | 'revert' | { raw: Hex };
@@ -93,6 +101,8 @@ export class FakeRpc {
   readonly nodes: Map<string, FakeNode> = new NodeMap();
   /** Authorization headers seen, per URL (credentials from the URL's user info). */
   readonly authorization: (string | null)[] = [];
+  /** The `redirect` mode of every request. */
+  readonly redirectModes: RequestInit['redirect'][] = [];
   readonly calls: RecordedCall[] = [];
   readonly signals: AbortSignal[] = [];
 
@@ -106,6 +116,7 @@ export class FakeRpc {
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
     this.authorization.push(new Headers(init?.headers).get('authorization'));
+    this.redirectModes.push(init?.redirect);
     const n = this.nodes.get(url);
     const body = JSON.parse(String(init?.body)) as {
       id: number;
@@ -122,6 +133,12 @@ export class FakeRpc {
         if (!signal) return;
         if (signal.aborted) reject(signal.reason);
         signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }
+    if (n.mode === 'redirect') {
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'https://elsewhere.example/' },
       });
     }
     if (n.mode === 'http500') return new Response(`upstream failure at ${url}`, { status: 500 });

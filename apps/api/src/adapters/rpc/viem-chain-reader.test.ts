@@ -156,6 +156,12 @@ describe('endpoint verification (eth_chainId)', () => {
     expect(lines.at(-1)).toMatchObject({ obj: { error: 'TimeoutError' } });
   });
 
+  it('proves an endpoint without any timeout or caller signal', async () => {
+    const { reader } = setup({ [A]: {} }, { verifyTimeoutMs: 0 });
+    await reader.verifyEndpoints();
+    expect(reader.canRead(1)).toBe(true);
+  });
+
   it('keeps an endpoint pending when it answers a malformed chain ID', async () => {
     const { reader, lines } = setup({ [A]: { results: { eth_chainId: 'one' } } });
     await reader.verifyEndpoints();
@@ -254,6 +260,21 @@ describe('balance reads with Multicall3', () => {
       expect(rpc.callsTo(B, 'eth_call')).toHaveLength(1);
       expectNoSecrets(lines);
     }
+  });
+
+  it('refuses a 3xx that the fetch did not follow, and fails over', async () => {
+    const { reader, rpc, read, lines } = setup({ [A]: {}, [B]: { tokens: new Map([[USDC, 3n]]) } });
+    await reader.verifyEndpoints();
+    rpc.nodes.get(A)!.mode = 'redirect';
+    expect((await read()).tokens[0]).toBe(3n);
+    expect(lines).toContainEqual({
+      level: 'warn',
+      obj: { chainId: 1, endpoint: 'E[0]', reason: 'redirect' },
+      msg: 'RPC endpoint answered with a redirect; refused',
+    });
+    // Every request is sent with redirect: 'error'.
+    expect(rpc.redirectModes.every((m) => m === 'error')).toBe(true);
+    expectNoSecrets(lines);
   });
 
   it('prefers the first healthy endpoint', async () => {
@@ -397,23 +418,54 @@ describe('bad data from an endpoint', () => {
     expect([err.code, err.reason]).toEqual(['rpc_unavailable', 'rpc_error']);
   });
 
-  it('refuses balances from another chain and re-checks every endpoint', async () => {
-    const { err, reader, rpc, lines } = await readWith({ callChainId: 10 });
+  it('refuses balances from another chain and drops the endpoint that answered', async () => {
+    const { err, reader, lines } = await readWith({ callChainId: 10 });
     expect(err.reason).toBe('chain_id_mismatch');
-    expect(lines.some((l) => l.level === 'error' && l.msg.includes('another chain'))).toBe(true);
-    // Re-verification ran (eth_chainId still says 1, so it is trusted again).
-    await vi.waitFor(() => expect(rpc.callsTo(A, 'eth_chainId')).toHaveLength(2));
-    await vi.waitFor(() => expect(reader.canRead(1)).toBe(true));
+    expect(lines.find((l) => l.level === 'error')).toEqual({
+      level: 'error',
+      obj: { chainId: 1, endpoint: 'E[0]', penaltyMs: 60_000 },
+      msg: 'RPC answered a balance read for another chain; endpoint dropped for a while',
+    });
+    expect(reader.canRead(1)).toBe(false);
+    expectNoSecrets(lines);
   });
 
-  it('after a mismatch inside a call, re-checks only endpoints that were trusted', async () => {
-    const { reader, rpc, read } = setup({ [A]: { callChainId: 10 }, [B]: { mode: 'down' } });
+  it('keeps the other endpoints serving, and backs off a repeat offender exponentially', async () => {
+    const { reader, rpc, read, tick, lines } = setup(
+      { [A]: { callChainId: 10 }, [B]: {} },
+      { mismatchPenaltyMs: 1_000, maxMismatchPenaltyMs: 3_000 },
+    );
     await reader.verifyEndpoints();
-    rpc.nodes.get(B)!.mode = 'ok';
+    const penalties: unknown[] = [];
+    for (const wait of [1_000, 2_000, 3_000, 3_000]) {
+      expect((await failure(read())).reason).toBe('chain_id_mismatch');
+      penalties.push(lines.filter((l) => l.level === 'error').at(-1)?.obj.penaltyMs);
+      // No flapping to 503: B keeps serving while A is out.
+      expect(reader.canRead(1)).toBe(true);
+      expect((await read()).blockNumber).toBe(1_000n);
+      // Not proved again before the penalty ends...
+      const proofs = rpc.callsTo(A, 'eth_chainId').length;
+      tick(wait - 1);
+      await reader.verifyEndpoints();
+      expect(rpc.callsTo(A, 'eth_chainId')).toHaveLength(proofs);
+      // ...then proved again (eth_chainId still says 1) and back first in line.
+      tick(1);
+      await reader.verifyEndpoints();
+      expect(rpc.callsTo(A, 'eth_chainId')).toHaveLength(proofs + 1);
+    }
+    expect(penalties).toEqual([1_000, 2_000, 3_000, 3_000]);
+  });
+
+  it('drops the endpoint that answered eth_chainId in the individual-call mode', async () => {
+    const { reader, rpc, read, lines } = setup(
+      { [A]: {}, [B]: {} },
+      { multicallChains: new Set<number>() },
+    );
+    await reader.verifyEndpoints();
+    rpc.nodes.get(A)!.chainId = 5;
     expect((await failure(read())).reason).toBe('chain_id_mismatch');
-    // Both are asked again at once: A (reset to pending) and B (still pending).
-    await vi.waitFor(() => expect(rpc.callsTo(B, 'eth_chainId')).toHaveLength(2));
-    await vi.waitFor(() => expect(reader.canRead(1)).toBe(true));
+    expect(lines.find((l) => l.level === 'error')?.obj.endpoint).toBe('E[0]');
+    expect((await read()).blockNumber).toBe(1_000n);
   });
 
   it('refuses a stale block and a block from the future', async () => {
