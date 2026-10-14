@@ -96,6 +96,26 @@ export const BALANCES: Record<ChainKey, Record<string, string>> = {
   'evm:42161': {},
 };
 
+/**
+ * The body of a `POST /v1/balances` answer. `held` is the wallet's balances by token symbol;
+ * with none, the wallet holds nothing on that chain.
+ */
+export function balancesAnswer(
+  chain: ChainKey,
+  address: string,
+  held: Record<string, string> = {},
+): unknown {
+  return {
+    chain,
+    address: address.toLowerCase(),
+    blockNumber: '12345',
+    balances: (TOKENS[chain] ?? []).map((tk) => ({
+      address: tk.address,
+      balance: held[tk.symbol] ?? '0',
+    })),
+  };
+}
+
 /** A request the page made to the API. */
 export interface ApiRequest {
   method: string;
@@ -114,6 +134,11 @@ export interface Reply {
   raw?: string;
   contentType?: string;
   delayMs?: number;
+  /**
+   * Holds the answer until this promise settles (see `deferred`). A reply with only a gate keeps
+   * the normal body, so a test holds an answer and releases it when it chooses, with no timer.
+   */
+  gate?: Promise<unknown>;
   /** Fail the request at the network level. */
   abort?: boolean;
 }
@@ -126,6 +151,12 @@ export class MockApi {
   readonly provoked = new Set<number>();
   /** Requests this test made fail at the network level on purpose. */
   aborts = 0;
+  /**
+   * The same requests by URL: how many failures of each the browser may still log as a console
+   * error (`net::ERR_FAILED`). The shared page checks use it so that only a failure the test
+   * asked for is let through, not any failure that happens while a test provokes one.
+   */
+  readonly abortedUrls = new Map<string, number>();
   private overrides: Override[] = [];
 
   /** Adds an override, tried before the defaults (the last one added is tried first). */
@@ -159,18 +190,7 @@ export class MockApi {
     }
     if (req.path === '/v1/balances' && req.method === 'POST') {
       const body = req.body as { chain: ChainKey; address: string };
-      const held = BALANCES[body.chain] ?? {};
-      return {
-        json: {
-          chain: body.chain,
-          address: body.address.toLowerCase(),
-          blockNumber: '12345',
-          balances: (TOKENS[body.chain] ?? []).map((tk) => ({
-            address: tk.address,
-            balance: held[tk.symbol] ?? '0',
-          })),
-        },
-      };
+      return { json: balancesAnswer(body.chain, body.address, BALANCES[body.chain]) };
     }
     return { status: 404, json: { error: 'not_found' } };
   }
@@ -221,6 +241,7 @@ export class MockApi {
         reply.status === undefined)
         ? { ...this.fallback(req), ...reply }
         : reply;
+    if (reply.gate) await reply.gate;
     if (reply.delayMs) await new Promise((r) => setTimeout(r, reply.delayMs));
     const status = reply.status ?? 200;
     if (status >= 400) this.provoked.add(status);
@@ -228,6 +249,7 @@ export class MockApi {
     try {
       if (reply.abort) {
         this.aborts++;
+        this.abortedUrls.set(request.url(), (this.abortedUrls.get(request.url()) ?? 0) + 1);
         await route.abort('failed');
       } else {
         await route.fulfill({
@@ -244,6 +266,67 @@ export class MockApi {
       /* the page aborted the request while the mock was waiting */
     }
   }
+}
+
+/** A promise the test settles by hand: `await`ed by the mock as a `gate`, released with `release()`. */
+export function deferred(): { promise: Promise<void>; release: () => void } {
+  let release: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+/** What `answersOutliveAbort` reports from the page. */
+export interface OutliveAbort {
+  /** How many complete answers the page has read from the API so far (all requests, ever). */
+  count: () => Promise<number>;
+  /** Resolves when the page has read `count` complete answers in all. */
+  until: (count: number) => Promise<void>;
+}
+
+/**
+ * Makes API answers reach the page's code even after the page aborted the request, the worst case
+ * for stale data: the browser had already received the answer when the abort landed, or a client
+ * resolved anyway. The page's own AbortController still flips to `aborted`, so only the guards in
+ * the picker's hooks keep such an answer off the screen. Must run before the first navigation.
+ */
+export async function answersOutliveAbort(page: Page): Promise<OutliveAbort> {
+  await page.addInitScript(
+    ({ origin }) => {
+      const w = window as unknown as { __apiAnswered: number };
+      w.__apiAnswered = 0;
+      const real = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        const ours = url.startsWith(origin);
+        // Drop the signal: the request is no longer cancellable from the page.
+        const rest = ours && init ? { ...init, signal: null } : init;
+        const res = await real(input, rest);
+        if (ours) {
+          void res
+            .clone()
+            .arrayBuffer()
+            .then(
+              () => (w.__apiAnswered += 1),
+              () => {},
+            );
+        }
+        return res;
+      };
+    },
+    { origin: API_ORIGIN },
+  );
+  return {
+    count: () =>
+      page.evaluate(() => (window as unknown as { __apiAnswered?: number }).__apiAnswered ?? 0),
+    until: async (count) => {
+      await page.waitForFunction(
+        (n) => (window as unknown as { __apiAnswered: number }).__apiAnswered >= n,
+        count,
+      );
+    },
+  };
 }
 
 export async function installApi(page: Page): Promise<MockApi> {

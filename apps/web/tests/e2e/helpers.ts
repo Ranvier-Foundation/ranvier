@@ -63,3 +63,17 @@ export async function gotoSwap(page: Page, width: number, height: number) {
   await page.evaluate(() => document.fonts.ready);
   await hydrated(page);
 }
+
+/**
+ * Resolves after the page has rendered and painted what is already queued: React's render task
+ * runs before the next two frames. Used after an event the test cannot observe (a late answer the
+ * page must ignore), so that a wrong render would be on screen before the next assertion.
+ */
+export async function afterRender(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
