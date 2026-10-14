@@ -30,7 +30,8 @@ export const rpcEnvName = (chainId: number): string => `${RPC_ENV_PREFIX}${chain
 
 /**
  * Parses one variable. https only; plain http only for a loopback host (a local node or fork).
- * Refuses an empty entry, a duplicate, more than eight entries, or anything that is not a URL.
+ * Refuses an empty entry, a duplicate (compared normalised), a fragment (even a bare `#`), more
+ * than eight entries, or anything that is not a URL.
  */
 export function parseRpcUrlList(name: string, raw: string): string[] {
   const entries = raw.split(',').map((e) => e.trim());
@@ -38,6 +39,7 @@ export function parseRpcUrlList(name: string, raw: string): string[] {
     throw new Error(`${name} lists more than ${MAX_RPC_URLS_PER_CHAIN} URLs`);
   }
   const urls: string[] = [];
+  const seen = new Set<string>();
   entries.forEach((entry, i) => {
     const where = `${name} entry ${i + 1}`;
     if (entry === '') throw new Error(`${where} is empty`);
@@ -54,8 +56,11 @@ export function parseRpcUrlList(name: string, raw: string): string[] {
     } else if (url.protocol !== 'https:') {
       throw new Error(`${where} must be an https URL (value not shown)`);
     }
-    if (url.hash !== '') throw new Error(`${where} must not have a fragment (value not shown)`);
-    if (urls.includes(entry)) throw new Error(`${where} repeats an earlier entry`);
+    // `url.hash` is empty for a bare `#`, so the raw entry is checked.
+    if (entry.includes('#')) throw new Error(`${where} must not have a fragment (value not shown)`);
+    // Compared normalised (`https://a` and `https://A/` are the same endpoint).
+    if (seen.has(url.href)) throw new Error(`${where} repeats an earlier entry`);
+    seen.add(url.href);
     urls.push(entry);
   });
   return urls;

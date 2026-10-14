@@ -49,6 +49,9 @@ describe('parseRpcUrlList', () => {
     [`ftp://a.example/${KEY}`, 'V entry 1 must be an https URL (value not shown)'],
     [`https://a.example/${KEY}#x`, 'V entry 1 must not have a fragment (value not shown)'],
     [`https://a.example/${KEY},https://a.example/${KEY}`, 'V entry 2 repeats an earlier entry'],
+    [`https://a.example/${KEY}#`, 'V entry 1 must not have a fragment (value not shown)'],
+    [`https://a.example,https://A.EXAMPLE/`, 'V entry 2 repeats an earlier entry'],
+    [`https://a.example:443/${KEY},https://a.example/${KEY}`, 'V entry 2 repeats an earlier entry'],
     [
       Array.from(
         { length: MAX_RPC_URLS_PER_CHAIN + 1 },

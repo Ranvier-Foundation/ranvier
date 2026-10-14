@@ -95,12 +95,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // error handler and hooks: replace it with the stable code, uncacheable.
     frameworkErrors: (err, req, reply) => {
       req.log.info({ err: { name: err.name, code: err.code } }, 'rejected request');
-      return (reply as FastifyReply)
-        .code(400)
-        .header('cache-control', 'no-store')
-        // Hooks (CORS among them) do not run for framework errors; Vary is harmless without CORS.
-        .header('vary', 'Origin')
-        .send({ error: 'invalid_request' });
+      return (
+        (reply as FastifyReply)
+          .code(400)
+          .header('cache-control', 'no-store')
+          // Hooks (CORS among them) do not run for framework errors; Vary is harmless without CORS.
+          .header('vary', 'Origin')
+          .send({ error: 'invalid_request' })
+      );
     },
   });
   const quoteSchema = quoteRequestSchema({ maxSlippageBps: deps.maxSlippageBps ?? 1_000 });
