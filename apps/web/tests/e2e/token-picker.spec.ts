@@ -285,9 +285,10 @@ test.describe('data comes only from the API', () => {
     const names = await optionNames(page);
     expect(names.slice(0, 4)).toEqual([
       'ETH, Ether, Ethereum, balance 0.0841',
-      'USDC, USD Coin, Ethereum, balance 2,410.50',
+      // USDC is listed on three chains, so its rows also name their short address.
+      'USDC, USD Coin, Ethereum, balance 2,410.50, address 0xa0b8…eb48',
       'ETH, Ether, Base, balance 1.5',
-      'USDC, USD Coin, Base, balance 640.00',
+      'USDC, USD Coin, Base, balance 640.00, address 0x8335…2913',
     ]);
     expect(names[4]).toBe('DAI, Dai Stablecoin, Ethereum');
     await expect(dialog(page).getByText('Other tokens')).toBeVisible();
@@ -443,6 +444,52 @@ test.describe('chain switching, search and stale answers', () => {
     await search(page).fill(TOKENS['evm:8453'][1]!.address);
     await expect(options(page)).toHaveCount(1);
     await expect(options(page).first()).toContainText('USDC');
+  });
+
+  test('the connected wallet address is never sent as search text', async ({ page, api }) => {
+    await openConnected(page);
+    await expect(dialog(page).getByText('Your tokens')).toBeVisible();
+    const sent = api.calls('tokens').length;
+    for (const text of [WALLET, WALLET.toLowerCase(), WALLET.slice(2).toUpperCase()]) {
+      await search(page).fill(text);
+      await expect(dialog(page).getByText(/^No tokens match\./)).toBeVisible();
+      await expect(options(page)).toHaveCount(0);
+    }
+    await page.waitForTimeout(500);
+    expect(api.calls('tokens')).toHaveLength(sent);
+    for (const r of api.requests) {
+      expect((r.path + r.search).toLowerCase()).not.toContain(WALLET.toLowerCase().slice(2));
+    }
+    // Another address is still searched.
+    await search(page).fill(TOKENS['evm:8453'][1]!.address);
+    await expect(options(page)).toHaveCount(1);
+  });
+
+  test('tokens that share a symbol show a short address as text; others show none', async ({
+    page,
+  }) => {
+    await open(page);
+    await expect(options(page).first()).toBeVisible();
+    const usdc = options(page).filter({ hasText: 'USDC' });
+    await expect(usdc).toHaveCount(3);
+    for (const [i, t] of [
+      TOKENS['evm:1'][1]!,
+      TOKENS['evm:8453'][1]!,
+      TOKENS['evm:42161'][1]!,
+    ].entries()) {
+      const short = `${t.address.slice(0, 6)}\u2026${t.address.slice(-4)}`;
+      await expect(usdc.nth(i).locator('.addr')).toHaveText(`\u00B7 ${short}`);
+      await expect(usdc.nth(i)).toHaveAttribute('aria-label', new RegExp(`address ${short}$`));
+      // Text only: nothing inside the row is a link.
+      await expect(usdc.nth(i).locator('a, [href]')).toHaveCount(0);
+    }
+    // The native coin has no address; a symbol that is unique on screen shows none.
+    await expect(options(page).filter({ hasText: 'DAI' }).locator('.addr')).toHaveCount(0);
+    await expect(options(page).filter({ hasText: 'ETH' }).first().locator('.addr')).toHaveCount(0);
+    // One chain: no symbol is shared, so no row shows an address.
+    await chip(page, 'Base').click();
+    await expect(options(page)).toHaveCount(2);
+    await expect(dialog(page).locator('.addr')).toHaveCount(0);
   });
 
   test('closing aborts requests that are still running', async ({ page, api }) => {
@@ -734,6 +781,39 @@ test.describe('selection and keyboard', () => {
     await dialog(page).getByRole('button', { name: 'Close' }).click();
     await expect(page).toHaveURL('/');
     await open(page);
+    await page.mouse.click(10, 500);
+    await expect(page).toHaveURL('/');
+  });
+
+  test('a close made by the browser itself reaches React (native close event)', async ({
+    page,
+  }) => {
+    await open(page);
+    await dialog(page).evaluate((d: HTMLDialogElement) => d.close());
+    await expect(page).toHaveURL('/');
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test('a drag that starts in the panel and ends on the scrim does not close; a plain scrim click does', async ({
+    page,
+  }) => {
+    await open(page);
+    const title = dialog(page).getByRole('heading', { name: 'Select a token' });
+    const t = await box(title);
+    // Press inside the panel, release over the scrim.
+    await page.mouse.move(t.x + 4, t.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(10, 500);
+    await page.mouse.up();
+    await expect(page).toHaveURL(/\/select-token$/);
+    await expect(dialog(page)).toBeVisible();
+    // Press on the scrim, release inside the panel.
+    await page.mouse.move(10, 500);
+    await page.mouse.down();
+    await page.mouse.move(t.x + 4, t.y + 4);
+    await page.mouse.up();
+    await expect(dialog(page)).toBeVisible();
+    // Press and release on the scrim.
     await page.mouse.click(10, 500);
     await expect(page).toHaveURL('/');
   });
