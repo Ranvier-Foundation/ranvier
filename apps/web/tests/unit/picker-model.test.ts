@@ -66,7 +66,7 @@ describe('formatTokenAmount', () => {
       2n ** 256n - 1n,
       18,
       undefined,
-      `${((2n ** 256n - 1n) / 10n ** 18n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.1584`,
+      `${((2n ** 256n - 1n) / 10n ** 18n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.584`,
     ],
   ] as const)('%s with %s decimals %j -> %s', (amount, decimals, opts, text) => {
     expect(formatTokenAmount(amount, decimals, opts)).toBe(text);
