@@ -99,6 +99,8 @@ describe('GET /v1/balances', () => {
     [`?chain=evm:1`, ['address']],
     [`?address=${OWNER}`, ['chain']],
     [`?chain=evm:1&address=${OWNER}&x=1`, ['(body)']],
+    // The RPC URL comes from the environment only; a request cannot name one.
+    [`?chain=evm:1&address=${OWNER}&rpc=https://evil.example`, ['(body)']],
     [`?chain=evm:1&chain=evm:1&address=${OWNER}`, ['chain']],
     [`?chain=evm:1&address=${OWNER}&address=${OWNER}`, ['address']],
     [`?chain=solana:mainnet&address=${OWNER}`, ['chain']],

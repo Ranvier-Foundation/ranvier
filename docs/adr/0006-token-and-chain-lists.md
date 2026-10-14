@@ -47,7 +47,7 @@ Two kinds of harm follow from a token list:
 
 Both answer from checked-in data only. No provider, oracle or signer is called, and no request value is echoed back.
 
-- `GET /v1/chains` returns the registry chains in `ZEROX_CHAIN_IDS`, in registry order: `key`, `name`, `family`, `nativeSymbol`, `nativeDecimals`, `explorer`, and `quoting`. `quoting` is true when routing is configured and the chain has trusted routers. Registry internals (oracle names, allowlists) are not sent.
+- `GET /v1/chains` returns the registry chains in `ZEROX_CHAIN_IDS`, in registry order: `key`, `name`, `family`, `nativeSymbol`, `nativeDecimals`, `explorer`, and `quoting`. `quoting` is true when routing is configured and the chain has trusted routers. ADR 0009 adds `balances` (true when `GET /v1/balances` can read the chain right now); that one flag comes from RPC health, not checked-in data. Registry internals (oracle names, allowlists) are not sent.
 - `GET /v1/tokens?chain=&q=&limit=` validates its query with a strict schema:
   - `chain` must be a registry chain. A registry chain with no list returns `[]`.
   - `q` is at most 64 characters of letters, digits, currency signs, spaces, `.`, `_` and `-`.

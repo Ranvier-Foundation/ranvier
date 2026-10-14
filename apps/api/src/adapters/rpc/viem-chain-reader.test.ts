@@ -380,6 +380,14 @@ describe('bad data from an endpoint', () => {
     expect(lines.at(-1)).toMatchObject({ obj: { reason: 'malformed_call_result' } });
   });
 
+  it('refuses a response body over maxResponseBytes', async () => {
+    const { err } = await readWith(
+      { aggregateRaw: `0x${'00'.repeat(4_096)}` },
+      { maxResponseBytes: 2_048 },
+    );
+    expect([err.code, err.reason]).toEqual(['rpc_unavailable', 'rpc_error']);
+  });
+
   it('refuses balances from another chain and re-checks every endpoint', async () => {
     const { err, reader, rpc, lines } = await readWith({ callChainId: 10 });
     expect(err.reason).toBe('chain_id_mismatch');

@@ -33,6 +33,7 @@ The backend signs the exact fee amount into each quote (EIP-712). The contract o
 - API-first, hexagonal backend: routing providers, chains and bridges are adapters behind common interfaces. One slow or failing provider never blocks a quote.
 - Chain families (EVM, Solana) are isolated modules. Chains are added through config, not code.
 - Chains are listed and delisted automatically against health criteria (DEX liquidity, pool depth, chain liveness, RPC availability, routing support).
+- The browser never talks to an RPC provider: wallet balances and other chain reads go through the API, which uses several providers per chain with failover. See [ADR 0009](adr/0009-balances-through-the-api.md).
 - Everything is self-hosted; no managed hosting or database platforms.
 
 ## Fee wrapper (EVM)

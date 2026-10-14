@@ -16,6 +16,7 @@ Rate limiting belongs at the edge (reverse proxy or WAF in front of the self-hos
 
 - [ ] Per-client-IP limit on `/v1/quotes` (starting point: 1 request per second sustained, burst 10) and a lower global ceiling sized to the 0x plan.
 - [ ] Per-client-IP limit on `/v1/fees/preview` (cheap, but keep it bounded).
+- [ ] Per-client-IP limit on `GET /v1/balances` (starting point: 2 requests per second sustained, burst 10). Each request can cost two paid RPC requests per chain. The API already merges identical requests, reuses a wallet's balances for 3 s and caps reads per chain (8 running, 32 waiting, then `503`), but a client cycling through addresses still spends RPC quota until the edge stops it (ADR 0009, [rpc-providers.md](rpc-providers.md)). Do not key limits or logs on the `address` query value: it is personal data.
 - [ ] Return `429` with `Retry-After`; never forward rate-limited requests upstream.
 - [ ] Request body size is already capped at 16 KiB by the API (`413 payload_too_large`); keep the edge cap at or below that.
 - [ ] Alert on sustained 429s and on the 0x quota approaching its limit.
