@@ -17,7 +17,7 @@ const LOOKS = {
   },
   picker: {
     frame: 'px-20 pt-72 pb-40 max-narrow:px-0 max-narrow:pt-56 max-narrow:pb-0',
-    panel: 'max-w-picker min-h-0 max-h-full flex flex-col max-narrow:h-full',
+    panel: 'max-w-picker min-h-0 max-h-full flex flex-col leading-normal max-narrow:h-full',
     header: 'shrink-0 px-24 pt-20 pb-12 max-narrow:py-8 max-narrow:pr-16 max-narrow:pl-20',
     title: 'text-title-s max-narrow:text-title-s-mobile',
   },

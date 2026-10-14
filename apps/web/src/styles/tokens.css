@@ -106,6 +106,8 @@
   --text-badge--font-weight: 700;
 
   --leading-body: 1.5;
+  /* The browser's own line height: the canvas artboards set none, so text sits at `normal`. */
+  --leading-normal: normal;
 
   --tracking-logo: -0.055em;
   --tracking-num: -0.02em;
