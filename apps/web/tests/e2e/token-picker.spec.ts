@@ -761,6 +761,25 @@ test.describe('shared page checks', () => {
   });
 });
 
+test.describe('the console never shows the wallet address', () => {
+  // Each passes only when the shared checks (fixtures.ts) reject the page. Levels that are not
+  // errors, so nothing else could make these tests fail.
+  for (const level of ['log', 'info', 'warn', 'debug'] as const) {
+    for (const [how, show] of [
+      ['lower case without 0x', (a: string) => a.toLowerCase().slice(2)],
+      ['checksummed', (a: string) => a],
+      ['inside an object', (a: string) => ({ wallet: a })],
+    ] as const) {
+      test(`console.${level}: ${how}`, async ({ page }) => {
+        test.fail();
+        await open(page);
+        const text = show(WALLET);
+        await page.evaluate(([lvl, t]) => console[lvl as 'log'](t), [level, text] as const);
+      });
+    }
+  }
+});
+
 test.describe('states', () => {
   test('loading shows a skeleton and announces it', async ({ page, api }) => {
     api.override((r) => (r.path === '/v1/tokens' ? { delayMs: 1500 } : undefined));
