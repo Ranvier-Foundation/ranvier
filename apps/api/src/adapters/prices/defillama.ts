@@ -2,6 +2,7 @@ import { getChain, knownDecimals, NATIVE } from '@ranvier/chains';
 import type { TokenRef } from '@ranvier/types';
 import { z } from 'zod';
 import type { PriceOracle, TokenPrice } from '../../ports/price-oracle.js';
+import { isRedirectError, isRedirectStatus } from '../../lib/redirect.js';
 import { parseDecimalScaled } from './decimal.js';
 
 /** A JSON number kept as its exact source text, so it never passes through a float. */
@@ -153,7 +154,18 @@ export class DefiLlamaPriceOracle implements PriceOracle {
     const id = `${chain.defillama}:${address}`;
 
     const path = `${encodeURIComponent(chain.defillama)}:${encodeURIComponent(address)}`;
-    const res = await this.fetch(`${this.baseUrl}/prices/current/${path}`, { signal });
+    // Never follow a redirect: a price must come from the configured host only.
+    let res: Response;
+    try {
+      res = await this.fetch(`${this.baseUrl}/prices/current/${path}`, {
+        signal,
+        redirect: 'error',
+      });
+    } catch (err: unknown) {
+      if (isRedirectError(err)) throw new PriceUnavailableError('DefiLlama redirect refused');
+      throw err;
+    }
+    if (isRedirectStatus(res.status)) throw new PriceUnavailableError('DefiLlama redirect refused');
     if (!res.ok) throw new PriceUnavailableError(`DefiLlama returned ${res.status}`);
     const parsed = responseSchema.safeParse(parseExact(await readBounded(res, this.maxBodyBytes)));
     if (!parsed.success) throw new PriceUnavailableError('malformed DefiLlama response');

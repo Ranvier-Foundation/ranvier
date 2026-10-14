@@ -456,6 +456,24 @@ describe('bad data from an endpoint', () => {
     expect(penalties).toEqual([1_000, 2_000, 3_000, 3_000]);
   });
 
+  it('penalizes the endpoint whose answer was used, not one that failed before it', async () => {
+    const { reader, rpc, read, lines } = setup({
+      [A]: { failMethods: new Set(['eth_call']) },
+      [B]: { callChainId: 10 },
+    });
+    await reader.verifyEndpoints();
+    expect((await failure(read())).reason).toBe('chain_id_mismatch');
+    // A answered eth_call first (HTTP 500), B answered it next, for another chain.
+    expect(rpc.callsTo(A, 'eth_call')).toHaveLength(1);
+    expect(rpc.callsTo(B, 'eth_call')).toHaveLength(1);
+    const dropped = lines.filter((l) => l.level === 'error').map((l) => l.obj.endpoint);
+    expect(dropped).toEqual(['E[1]']);
+    // A is still trusted: once it answers again, it serves.
+    rpc.nodes.get(A)!.failMethods = new Set();
+    expect((await read()).blockNumber).toBe(1_000n);
+    expect(rpc.callsTo(B, 'eth_call')).toHaveLength(1);
+  });
+
   it('drops the endpoint that answered eth_chainId in the individual-call mode', async () => {
     const { reader, rpc, read, lines } = setup(
       { [A]: {}, [B]: {} },

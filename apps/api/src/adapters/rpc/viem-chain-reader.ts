@@ -16,6 +16,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { arbitrum, base, mainnet } from 'viem/chains';
+import { isRedirectError, isRedirectStatus } from '../../lib/redirect.js';
 import {
   ChainReadError,
   type BalancesRead,
@@ -196,9 +197,17 @@ function isRevert(err: unknown): boolean {
   );
 }
 
-/** True when every attempt timed out (viem's per-request timeout). */
+/**
+ * True when the attempts timed out: viem's per-request timeout (headers), or our own per-request
+ * budget firing while a body was read (a `TimeoutError` DOMException as the cause).
+ */
 function hasTimeout(err: unknown): boolean {
-  return err instanceof BaseError && err.walk((e) => e instanceof TimeoutError) !== null;
+  return (
+    err instanceof BaseError &&
+    err.walk(
+      (e) => e instanceof TimeoutError || (e as { name?: unknown }).name === 'TimeoutError',
+    ) !== null
+  );
 }
 
 /**
@@ -231,12 +240,6 @@ class EndpointRedirectError extends Error {
   constructor() {
     super('redirect refused');
   }
-}
-
-/** Node's fetch with `redirect: 'error'` fails a 3xx with this cause. */
-function isRedirectError(err: unknown): boolean {
-  const cause = (err as { cause?: { message?: unknown } } | null)?.cause;
-  return err instanceof TypeError && /redirect/i.test(String(cause?.message));
 }
 
 /** The JSON-RPC method of a request body viem built (a single request, never a batch). */
@@ -564,23 +567,32 @@ export class ViemChainReader implements ChainReader {
    * The fetch of one endpoint. Never follows a redirect. With `gate` (reads, ranking pings) it
    * refuses until the endpoint has proved its chain, honours the caller's signal and records
    * which endpoint answered which method.
+   *
+   * Its own timeout covers the whole exchange, body included: viem's timeout ends when the
+   * headers arrive, so an endpoint that sends `200` and part of a body, then stalls, would
+   * otherwise hold the read until the caller's deadline with no failover. Aborting the fetch
+   * also aborts the body stream, and viem moves to the next endpoint.
    */
   private endpointFetch(chainId: number, ep: Endpoint, gate: boolean): typeof fetch {
+    const budgetMs = gate ? this.requestTimeoutMs : this.verifyTimeoutMs;
     return async (input, init) => {
       if (gate && ep.status !== 'verified') throw new EndpointNotVerifiedError();
       const ctx = gate ? this.context.getStore() : undefined;
-      const caller = ctx?.signal;
-      const signal =
-        caller && init?.signal ? AbortSignal.any([caller, init.signal]) : (caller ?? init?.signal);
+      const signals = [
+        ctx?.signal,
+        init?.signal ?? undefined,
+        budgetMs > 0 ? AbortSignal.timeout(budgetMs) : undefined,
+      ].filter((s): s is AbortSignal => s !== undefined);
+      const signal = signals.length > 0 ? AbortSignal.any(signals) : null;
       let res: Response;
       try {
-        res = await this.fetch(input, { ...init, signal: signal ?? null, redirect: 'error' });
+        res = await this.fetch(input, { ...init, signal, redirect: 'error' });
       } catch (err: unknown) {
         if (isRedirectError(err)) throw this.redirected(chainId, ep);
         throw err;
       }
       // A fetch that ignored `redirect: 'error'` (defence in depth): a 3xx is still refused.
-      if (res.status >= 300 && res.status < 400) throw this.redirected(chainId, ep);
+      if (isRedirectStatus(res.status)) throw this.redirected(chainId, ep);
       ctx?.served.push({ method: methodOf(init), ep });
       return res;
     };
