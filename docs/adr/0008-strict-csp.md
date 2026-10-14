@@ -53,7 +53,9 @@ default-src 'none'; script-src 'nonce-{N}' 'strict-dynamic' 'report-sample'; sty
 - **`next dev` only:** `'unsafe-eval'` for scripts (React rebuilds server error stacks with `eval`) and `style-src 'self' 'unsafe-inline'`, because Turbopack's dev CSS loader injects un-nonced `<style>` elements (33 violations measured without it). A production build never contains `unsafe-*`; unit tests, e2e tests and the CI header check all assert this.
 - **`{API_ORIGIN}`** is decided at build time only. next.config.ts validates `NEXT_PUBLIC_API_URL` with `apiOrigin()` (an http(s) origin only, https in production except loopback), so a bad value fails the build. It then bakes the origin into the build as `RANVIER_BUILD_API_ORIGIN` through Next's `env` option, which replaces it with a literal (empty when unset). The proxy reads only that literal. Before this, an unset build value left `process.env.NEXT_PUBLIC_API_URL` to be read at runtime: a server variable could change `connect-src`, and an invalid one answered every request with a 500. Runtime is the wrong place for this anyway: the client bundle bakes `NEXT_PUBLIC_API_URL` at build, so a runtime-only value could never be used by the page. Changing the API origin means rebuilding, as it already did for the client.
 - **Report-Only only on staging.** `CSP_REPORT_ONLY=1` together with `RANVIER_ENV=staging` (exact values, read once at server start) sends the same policy as `Content-Security-Policy-Report-Only`, for a first run behind the real proxy and CDN. `CSP_REPORT_ONLY=1` without `RANVIER_ENV=staging` is **ignored**: the policy stays enforced, so a flag left over from staging cannot turn production into report-only. Both cases log one `[security]` warning at server start (`src/instrumentation.ts`).
-- **`/_global-error`.** Next's built-in error route answers its own URL with a prerendered page that is cacheable (`s-maxage=31536000`), carries inline styles and has no nonces. The proxy rewrites any direct request for it to the app's 404, under the policy. Real errors still render the error page inside the failing request, which never passes through that URL.
+- **`/_global-error`.** Next's built-in error route answers its own URL with a prerendered page that is cacheable (`s-maxage=31536000`), carries inline styles and has no nonces. The proxy answers any direct request for it itself: a plain-text `404` with `Cache-Control: no-store`. The policy is still set on it, as defence in depth (plain text is not HTML). Real errors still render the error page inside the failing request, which never passes through that URL.
+  - It is deliberately not a rewrite. A rewrite URL built from `request.url` takes the forwarded scheme and host (`https://…` behind Caddy or Cloudflare). Next treats that as an external URL and fetches it over TLS from its own plain-HTTP port: a 500, an EPROTO stack trace and an outbound socket per request (found in security review; the first version shipped with it).
+  - The proxy has no other rewrite or redirect.
 
 ### Other headers (next.config.ts, every response)
 
@@ -111,7 +113,7 @@ Revisit SRI when Next supports it fully for Turbopack.
   - the proxy drops client-sent CSP headers and uses a new nonce per request;
   - Report-Only needs both flags; a stray `CSP_REPORT_ONLY=1` is ignored; each case warns exactly once;
   - `connect-src` comes only from the baked origin, and next.config.ts bakes it;
-  - `/_global-error` is rewritten to the 404;
+  - `/_global-error` (and `.html`, `.rsc`, with and without `X-Forwarded-Proto: https` and `rsc: 1`) gets the plain 404, with no `x-middleware-rewrite` and nothing forwarded;
   - the proxy `matcher`, compiled and matched by Next's own functions, skips `/_next/static/*` and nothing else (dotted paths, `/_next/…`, encoded paths and data routes are all covered);
   - the static headers, and every `apiOrigin()` case, including a bad value failing next.config.ts.
 - **e2e (`tests/e2e/csp.spec.ts`, production build), on every route in `tests/e2e/routes.ts` and on the 404:**
@@ -122,6 +124,7 @@ Revisit SRI when Next supports it fully for Turbopack.
   - `/_global-error` is a non-cacheable 404;
   - build-asset misses are plain-text 404s with no HTML.
   - Proven to bite: with a narrower matcher (`/((?!_next/|.*\..*).*)`, as written in a TypeScript string: `'/((?!_next/|.*\\..*).*)'`), the matcher unit test, five matcher-coverage e2e tests and the CI header check all fail.
+  - Also proven: with the old `/_global-error` rewrite restored, the unit test, nine e2e tests and the CI header check fail (500 behind `X-Forwarded-Proto: https`).
 - **Negative e2e:** the document is intercepted and seven payloads are injected: an inline script, an `onerror` handler, a `javascript:` link, an `evil.example` script, a same-origin chunk, a style attribute and a `<style>` element. None takes effect, exactly seven enforced violations fire, and the app keeps working.
 - **Shared fixture (`tests/e2e/fixtures.ts`).** Every e2e test fails on any CSP violation or CSP console message, any request off the origin, any console or page error, or any unexpected error response.
 - **Retries cannot hide a CSP failure.** CI retries a failed test once. `csp.spec.ts` runs with `retries: 0`. For every other test, the fixture records a CSP violation on disk, and any retry of that test fails with it.
@@ -140,7 +143,7 @@ Revisit SRI when Next supports it fully for Turbopack.
 - Token logos are served from our own origin. `img-src` is never widened to `https:`.
 - A Next upgrade can change how nonces are applied. The e2e suite and the CI header check fail if it does.
 - A cached HTML response would reuse a nonce. The runbook forbids caching HTML at Caddy and Cloudflare.
-- **Rate limiting is a hard pre-production requirement.** Every page is rendered per request and HTML cannot be cached, so a request for any made-up path costs about as much as `/`. Measured on one process: about 420 req/s for a random 404, against about 5,750 req/s for a static miss. Production must not go live without per-IP limits and burst challenges at the edge, sized Node workers and a passing load test (`docs/runbooks/web-deployment-headers.md`, "Rate limiting"; the API's own limits are in `docs/runbooks/edge-rate-limiting.md`).
+- **Rate limiting is a hard pre-production requirement.** Every page is rendered per request and HTML cannot be cached, so a request for any made-up path costs about as much as `/`. Measured on one process: about 420 req/s for a random 404, against about 5,750 req/s for a static miss. Production must not go live without per-IP limits and burst challenges at the edge, sized Node workers and a passing load test. The load test includes a dot-segment path under `/_next/static/`, because a raw-prefix exemption renders full pages without limit; exempt only real static files, after URL normalisation. IPv6 has to be limited per /64 at Cloudflare, because Caddy keys per /128 (`docs/runbooks/web-deployment-headers.md`, "Rate limiting"; the API's own limits are in `docs/runbooks/edge-rate-limiting.md`).
 - HSTS with `includeSubDomains; preload` is already served. Every subdomain must serve HTTPS before the first production deploy, not only before the preload submission.
 
 ### What the first signing PR must assume

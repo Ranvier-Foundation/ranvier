@@ -7,7 +7,8 @@ This runbook covers the API. The web app has its own limits, which are just as m
 - Cloudflare WAF rate limiting rules in front, then Caddy with the `caddy-ratelimit` plugin at the origin.
 - The key is the real client IP. Caddy trusts only Cloudflare's ranges and reads `CF-Connecting-IP`; the origin firewall accepts only Cloudflare.
 - Over the limit, answer `429` with `Retry-After`.
-- Verify with `node apps/web/scripts/bench.mjs <url> 2000 20` from one machine; it counts responses by status code.
+- Verify with `node apps/web/scripts/bench.mjs <url> 2000 20 --allow-host <host>` from one machine; it counts responses by status code and refuses hosts that are not named.
+- Normalise URLs before matching (Cloudflare "Normalize incoming URLs" on), and limit IPv6 per /64 at Cloudflare, because Caddy keys per address (see the web runbook).
 
 The quote API has no built-in rate limiting. Each `POST /v1/quotes` can trigger paid upstream calls (0x) and price-oracle lookups. Unlimited traffic can therefore exhaust the 0x quota or run up costs, and can degrade quotes for everyone.
 

@@ -49,7 +49,9 @@ Either line in a production log means the environment is misconfigured. Remove t
 - Cache `/_next/static/*` at the edge for as long as you like. These files are immutable (`Cache-Control: public, max-age=31536000, immutable`), and Next sends no CSP on them. A miss there is a plain-text 404 that is never HTML, so it needs no policy.
 - Compression (gzip or brotli) of responses.
 - A Cloudflare challenge page (bot or DDoS) is a separate response from Cloudflare, so it does not need our policy.
-- `/_global-error` needs no proxy rule. The app answers a direct request for it with its own 404 under the policy. Next's prerendered error page there was cacheable (`s-maxage=31536000`) and had no nonces.
+- `/_global-error` needs no rule in Caddy or Cloudflare. The app's proxy answers a direct request for it (`/_global-error`, `.html`, `.rsc`, with or without `X-Forwarded-Proto: https`) with a plain-text `404` and `Cache-Control: no-store`. Next's prerendered error page there was cacheable (`s-maxage=31536000`) and had no nonces.
+  - An earlier version rewrote the request to the 404 page instead. Behind a TLS-terminating proxy, that rewrite was built as an `https://` URL, which Next fetched as an external URL from its own plain-HTTP port: a 500, an EPROTO stack trace and an outbound socket per request.
+  - CI now checks these paths with forwarded headers (`check:headers`, `csp.spec.ts`).
 
 ## Rate limiting (hard pre-production requirement)
 
@@ -67,7 +69,13 @@ One client with a loop can therefore saturate a process. The API has its own lis
 
 Do all of the following.
 
-**Per-IP limit on everything except `/_next/static/*`.** One page view costs one document request plus the RSC prefetches for every visible nav link (7 today), so roughly 8 to 10 requests. Start at **300 requests per minute per IP**, check it against real browsing on staging, and tighten it if you can.
+**Per-IP limit on every request except real build-asset files.** One page view costs one document request plus the RSC prefetches for every visible nav link (7 today), so roughly 8 to 10 requests. Start at **300 requests per minute per IP**, check it against real browsing on staging, and tighten it if you can.
+
+**Exempt only real static files, and only after URL normalisation.** A raw prefix exemption (`/_next/static/*`) can be bypassed. Next resolves dot segments, so `/_next/static/%2E%2E/%2E%2E/` renders the full home page (200, 23 scripts, measured), and `/_next/static/%2e%2e/x` renders the 404 page: unlimited full renders behind an "exempt" prefix. Therefore:
+
+- Prefer to limit everything and exempt only requests that are certainly a build file: a path of plain segments ending in a file name with an asset extension, and containing no `%` or `..` (the regex in the example below). Anything else falls under the limit.
+- **Cloudflare:** keep **Normalize incoming URLs** turned on (Rules, Settings, URL normalization), so rule expressions see the normalised path, and keep `contains ".."` and `contains "%"` in the exemption anyway.
+- **Caddy:** whether its matchers see `%2E%2E` decoded or cleaned depends on the version. Do not rely on it: use the strict regex, then prove it with the dot-segment load test below, which must hit the limit.
 
 Caddy has no built-in rate limiter. It needs the `github.com/mholt/caddy-ratelimit` plugin, built in with `xcaddy build --with github.com/mholt/caddy-ratelimit`. The example below is unverified (written without a Caddy build); test it on staging with the load test before relying on it:
 
@@ -85,8 +93,10 @@ app.example.com {
 	rate_limit {
 		zone web_pages {
 			match {
-				not path /_next/static/*
+				# Everything except a real build file: no dots in directories, no % or "..".
+				not path_regexp ^/_next/static/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|woff2|png|svg|ico|map|txt)$
 			}
+			# One key per client address. IPv6 is keyed per /128 (see "IPv6" below).
 			key {client_ip}
 			events 300
 			window 1m
@@ -96,6 +106,9 @@ app.example.com {
 	# get HSTS and nosniff too. `?` sets a header only when the app did not; never touch CSP here.
 	header ?Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 	header ?X-Content-Type-Options "nosniff"
+	# TRACE has no use here; Next answers it with a plain-text 500 (no HTML, no CSP).
+	@trace method TRACE
+	respond @trace 405
 	reverse_proxy 127.0.0.1:3001 127.0.0.1:3002 127.0.0.1:3003 127.0.0.1:3004 {
 		lb_policy least_conn
 	}
@@ -104,9 +117,11 @@ app.example.com {
 
 The alternative, or an additional layer, without a Caddy plugin is a Cloudflare WAF rate limiting rule. Which periods and actions are available depends on the Cloudflare plan:
 
-- Expression: `(http.host eq "app.example.com" and not starts_with(http.request.uri.path, "/_next/static/"))`
+- Expression: `(http.host eq "app.example.com" and not (starts_with(http.request.uri.path, "/_next/static/") and not http.request.uri.path contains ".." and not http.request.uri.path contains "%"))`, with URL normalisation on.
 - Counting characteristic: IP.
 - Threshold: the same budget (for example 50 requests per 10 seconds), action Block, with a mitigation timeout.
+
+**IPv6.** `key {client_ip}` counts each IPv6 address (/128) separately, and anyone with an ordinary /64 has effectively unlimited addresses. Caddy's placeholders cannot truncate an address to a prefix, and the plugin has no option for it (as far as known; check the plugin's current README). So per-prefix limiting must come from Cloudflare: use a rate-limiting characteristic that groups IPv6 by /64 if your plan offers one. Otherwise rely on the global ceiling (a rule without a per-IP characteristic, sized to total capacity), on Bot Fight mode, and on Under Attack mode during an incident. A Caddy per-IP limit alone is not enough for IPv6.
 
 **Challenge on bursts.** Add a second, lower Cloudflare rule (for example 30 requests per 10 seconds per IP on the same expression) with the action Managed Challenge, so a burst meets a challenge before the hard block. Turn on Under Attack mode during an incident.
 
@@ -115,9 +130,14 @@ The alternative, or an additional layer, without a Caddy plugin is a Cloudflare 
 **Verify with a load test,** from one machine against staging (only hosts you operate):
 
 ```sh
-node apps/web/scripts/bench.mjs https://staging.example.com/ 2000 20
-node apps/web/scripts/bench.mjs "https://staging.example.com/made-up-$RANDOM" 2000 20
+H=staging.example.com
+node apps/web/scripts/bench.mjs "https://$H/" 2000 20 --allow-host $H
+node apps/web/scripts/bench.mjs "https://$H/made-up-$RANDOM" 2000 20 --allow-host $H
+# Dot segments under the exempt prefix render full pages: this must hit the limit too.
+node apps/web/scripts/bench.mjs "https://$H/_next/static/%2E%2E/%2E%2E/" 2000 20 --allow-host $H
 ```
+
+`bench.mjs` refuses any host other than localhost, `127.0.0.1` or `[::1]` unless `--allow-host` names it exactly.
 
 - Expected: `statuses` contains `429` (or Cloudflare's challenge or block status) once the budget is used up, and the rest are 200 or 404.
 - Without the limiter, all 2,000 succeed. That result is a release blocker.
@@ -156,7 +176,8 @@ For every production release, and as a **blocking** gate for any release that in
 
 - [ ] The enforcing `Content-Security-Policy` header is present on the release (verification above, run against production), and there is no `Content-Security-Policy-Report-Only` header.
 - [ ] Neither `CSP_REPORT_ONLY` nor `RANVIER_ENV=staging` is set in the production environment, and the server log has no `[security]` line.
-- [ ] The rate limits above are active, and the load test shows 429s or challenges.
+- [ ] The rate limits above are active, and the load test shows 429s or challenges for `/`, for a made-up path **and** for `/_next/static/%2E%2E/%2E%2E/`.
+- [ ] `TRACE /` is refused at the proxy (`curl -s -o /dev/null -w '%{http_code}' -X TRACE "$H/"` prints `405`, or Cloudflare's block status).
 - [ ] CI was green on the released commit, including `check:headers` and `csp.spec.ts`.
 
 ## First rollout: Report-Only
@@ -178,7 +199,9 @@ Neither is exploitable:
 
 - **No document.** Neither response has an HTML document or scripts from us. The browser either follows the `Location` at once, where the target carries every header, or shows a bare error.
 - **HSTS still applies.** The browser keeps HSTS from any earlier HTTPS response.
-- **The proxy has nothing left to fail on.** Its only inputs now are fixed at build time; the runtime `NEXT_PUBLIC_API_URL` that could once make it throw is no longer read.
+- **The proxy has little left to fail on.** It no longer reads `NEXT_PUBLIC_API_URL` at runtime (that could once make it throw on every request), and it no longer rewrites (a rewrite once produced a 500 behind a TLS proxy). If it does throw, the result is still a bare 500 with no document.
+
+`TRACE /` also returns a plain-text 500 without CSP. It is not HTML, so nothing runs; block `TRACE` at the proxy anyway (Caddy example above).
 
 The `header ?…` lines in the Caddy example add HSTS and nosniff to these responses anyway.
 
