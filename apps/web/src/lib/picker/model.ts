@@ -80,3 +80,20 @@ export function splitSections(rows: readonly PickerRow[]): Sections {
 export function quickPicks(tokens: readonly ApiToken[]): ApiToken[] {
   return tokens.filter((t) => t.tags.includes('native') || t.tags.includes('stablecoin'));
 }
+
+/**
+ * Symbols that more than one listed token shares (compared without case), among the rows on
+ * screen. Rows of these tokens show a short address so the user can tell them apart: a symbol
+ * alone does not identify a token (ADR 0010). The schema already refuses two tokens with one
+ * symbol on one chain, so a collision is always between chains.
+ */
+export function collidingSymbols(rows: readonly PickerRow[]): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const colliding = new Set<string>();
+  for (const { token } of rows) {
+    const symbol = token.symbol.toUpperCase();
+    if (seen.has(symbol)) colliding.add(symbol);
+    seen.add(symbol);
+  }
+  return colliding;
+}

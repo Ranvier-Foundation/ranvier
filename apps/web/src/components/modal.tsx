@@ -28,6 +28,11 @@ export type ModalVariant = keyof typeof LOOKS;
 const TABBABLE =
   'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** True for the dialog element itself and its padding frame: the dimmed area around the panel. */
+function isScrim(target: EventTarget, dialog: HTMLDialogElement): boolean {
+  return target === dialog || (target as HTMLElement).dataset['scrim'] === 'true';
+}
+
 export interface ModalProps {
   variant?: ModalVariant;
   /** Id of the title element, which labels the dialog. */
@@ -61,11 +66,17 @@ export function Modal({
   children,
 }: ModalProps) {
   const dialog = useRef<HTMLDialogElement>(null);
+  // Set while this component closes the dialog itself (unmount), so the `close` event that
+  // follows is not taken for a browser-initiated close.
+  const closing = useRef(false);
+  // Where the current press started and ended: a click closes only if both were on the scrim.
+  const pressed = useRef({ down: false, up: false });
   const look = LOOKS[variant];
 
   useEffect(() => {
     const el = dialog.current;
     if (!el) return;
+    closing.current = false;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!el.open) el.showModal();
     // On a touch screen focusing a text field opens the keyboard over the sheet: leave focus on
@@ -74,6 +85,7 @@ export function Modal({
       el.querySelector<HTMLElement>('[data-initial-focus]')?.focus();
     }
     return () => {
+      closing.current = true;
       el.close();
       if (restoreFocus && opener) {
         // After the dialog is gone and the page behind it is live again.
@@ -92,6 +104,12 @@ export function Modal({
         e.preventDefault();
         onClose();
       }}
+      onClose={(e) => {
+        // The browser closed the dialog by itself (a script, a `dialog` form, the UA): tell the
+        // parent, or React would keep it mounted and think it is open. Ignore our own close, and
+        // a stale event from a close that was followed by a new `showModal()`.
+        if (!closing.current && !e.currentTarget.open) onClose();
+      }}
       onKeyDown={(e) => {
         // Keep Tab inside the dialog: wrap from the last control to the first and back.
         if (e.key !== 'Tab') return;
@@ -107,11 +125,18 @@ export function Modal({
           first.focus();
         }
       }}
+      onPointerDown={(e) => {
+        pressed.current = { down: isScrim(e.target, e.currentTarget), up: false };
+      }}
+      onPointerUp={(e) => {
+        pressed.current.up = isScrim(e.target, e.currentTarget);
+      }}
       onClick={(e) => {
-        // A click on the scrim (the dialog element itself or its padding frame) closes.
-        if (e.target === e.currentTarget || (e.target as HTMLElement).dataset['scrim'] === 'true') {
-          onClose();
-        }
+        // A click on the scrim closes only if the press and the release were both on it: a drag
+        // that starts in the panel (selecting text) and ends over the scrim must not close.
+        const { down, up } = pressed.current;
+        pressed.current = { down: false, up: false };
+        if (down && up && isScrim(e.target, e.currentTarget)) onClose();
       }}
       className="m-0 size-full max-h-full max-w-full overflow-hidden bg-transparent p-0 text-ink backdrop:bg-scrim"
     >

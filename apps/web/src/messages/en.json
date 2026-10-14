@@ -100,6 +100,8 @@
   "picker.row.name": "{name} · ",
   "picker.row.label": "{symbol}, {name}, {chain}",
   "picker.row.label.balance": "{symbol}, {name}, {chain}, balance {amount}",
+  "picker.row.label.address": "{label}, address {address}",
+  "picker.row.address": "· {address}",
   "picker.row.balance.loading": "Loading balance",
   "picker.empty": "No tokens match. Try a symbol, a name or a full contract address.",
   "picker.loading": "Loading tokens",
