@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { getAddress } from 'viem';
 import { box, gotoSwap, RGB, styles } from './helpers';
 import {
@@ -18,17 +19,6 @@ import {
 
 const CHECKSUMMED_A = getAddress(ACCOUNT_A);
 const SHORT_A = `${CHECKSUMMED_A.slice(0, 6)}…${CHECKSUMMED_A.slice(-4)}`;
-/** Nav targets whose screens do not exist yet; Next prefetches them and gets a 404. */
-const UNBUILT_ROUTES = new Set([
-  '/trade',
-  '/buy',
-  '/activity',
-  '/portfolio',
-  '/account',
-  '/notifications',
-  '/select-token',
-  '/settings',
-]);
 const header = (page: Page) => page.getByRole('banner');
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Connect wallet' });
 const walletPill = (page: Page) => header(page).getByRole('button', { name: /^Wallet 0x/ });
@@ -49,31 +39,9 @@ async function connect(page: Page) {
   await expect(walletPill(page)).toBeVisible();
 }
 
-// Collected for every test: nothing may leave the origin, nothing may log an error.
-const problems = new WeakMap<Page, string[]>();
-test.beforeEach(({ page, baseURL }) => {
-  const list: string[] = [];
-  problems.set(page, list);
-  const origin = new URL(baseURL ?? 'http://127.0.0.1:3100').origin;
-  page.on('request', (r) => {
-    const url = new URL(r.url());
-    if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') return;
-    if (url.origin !== origin) list.push(`third-party request: ${r.url()}`);
-  });
-  page.on('console', (m) => {
-    // 404s are checked on the response below (unbuilt nav routes are prefetched).
-    if (m.type() === 'error' && !/Failed to load resource.*404/.test(m.text())) {
-      list.push(`console error: ${m.text()}`);
-    }
-  });
-  page.on('response', (r) => {
-    const { pathname } = new URL(r.url());
-    if (r.status() >= 400 && !UNBUILT_ROUTES.has(pathname)) list.push(`${r.status()} ${r.url()}`);
-  });
-  page.on('pageerror', (e) => list.push(`page error: ${e.message}`));
-});
+// Every test also runs the shared page checks (fixtures.ts): no CSP violation, nothing leaves
+// the origin, no console or page error, no unexpected error response.
 test.afterEach(async ({ page }) => {
-  expect(problems.get(page)).toEqual([]);
   // Allowlist, for every test and across reloads: nothing but connection and network methods.
   expect(await unexpectedWalletCalls(page)).toEqual([]);
 });
@@ -304,10 +272,14 @@ test.describe('connect flow', () => {
     page,
   }) => {
     await gotoSwap(page, 1440, 900);
-    await connectButton(page).focus();
-    await page.keyboard.press('Enter');
     const d = dialog(page);
-    await expect(d).toBeVisible();
+    // Enter before hydration does nothing (no handler yet); under parallel load that race showed
+    // up about once in 300 runs, on main too. Retry until the dialog opens.
+    await expect(async () => {
+      await connectButton(page).focus();
+      await page.keyboard.press('Enter');
+      await expect(d).toBeVisible({ timeout: 1000 });
+    }).toPass();
     const inside = () =>
       page.evaluate(
         () => document.querySelector('dialog')?.contains(document.activeElement) ?? false,
