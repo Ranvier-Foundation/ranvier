@@ -15,6 +15,10 @@ concurrency:
 jobs:
   typescript:
     runs-on: ubuntu-latest
+    env:
+      # The web build bakes the API origin into its CSP and client code; the e2e tests answer that
+      # origin themselves (apps/web/tests/e2e/api-mock.ts), so it only has to match.
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3199
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

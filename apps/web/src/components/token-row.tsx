@@ -6,9 +6,12 @@ import { TokenAvatar } from './token-avatar';
 /** Stablecoins read like money: two places, as the canvas shows "2,410.50". */
 const STABLE_PLACES = 2;
 
-/** The balance as text, or undefined when none is shown. Display only (ADR 0009). */
+/**
+ * The balance as text, or undefined when none is shown: nothing is shown for a zero balance (the
+ * list is of what you hold; a column of zeros is noise) or an unknown one. Display only (ADR 0009).
+ */
 export function balanceText(row: PickerRow): string | undefined {
-  if (row.balance.state !== 'known') return undefined;
+  if (row.balance.state !== 'known' || row.balance.amount === 0n) return undefined;
   return formatTokenAmount(
     row.balance.amount,
     row.token.decimals,

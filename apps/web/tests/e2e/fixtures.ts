@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test as base, expect, type Page } from '@playwright/test';
+import { API_ORIGIN, installApi, type MockApi } from './api-mock';
 import { NOT_FOUND_ROUTE, UNBUILT_ROUTES } from './routes';
 
 export { expect };
@@ -68,6 +69,11 @@ interface Fixtures {
   pageChecks: boolean;
   /** The CSP recording for this test's page (always on). */
   csp: CspRecord;
+  /**
+   * The Ranvier API, answered by the test (api-mock.ts) on every page. It is the only origin besides
+   * the app's own that a page may call; anything else (an RPC provider, say) fails the test.
+   */
+  api: MockApi;
   pageProblems: undefined;
 }
 
@@ -76,8 +82,11 @@ export const test = base.extend<Fixtures>({
   csp: async ({ page }, use) => {
     await use(await recordCsp(page));
   },
+  api: async ({ page }, use) => {
+    await use(await installApi(page));
+  },
   pageProblems: [
-    async ({ page, baseURL, pageChecks, csp }, use, testInfo) => {
+    async ({ page, baseURL, pageChecks, csp, api }, use, testInfo) => {
       const list: string[] = [];
       // CI retries a failed test once. A CSP violation must not be rescued by that retry: the
       // first attempt leaves a marker (test-results is emptied at the start of every run) and
@@ -92,11 +101,15 @@ export const test = base.extend<Fixtures>({
         if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') {
           return;
         }
-        if (url.origin !== origin) list.push(`third-party request: ${r.url()}`);
+        if (url.origin !== origin && url.origin !== API_ORIGIN) {
+          list.push(`third-party request: ${r.url()}`);
+        }
       });
       page.on('console', (m) => {
         // 404s are checked on the response below (unbuilt nav routes are prefetched).
-        if (m.type() === 'error' && !/Failed to load resource.*404/.test(m.text())) {
+        const failed = /Failed to load resource.*status of (\d{3})/.exec(m.text());
+        const provoked = failed?.[1] !== undefined && api.provoked.has(Number(failed[1]));
+        if (m.type() === 'error' && !/Failed to load resource.*404/.test(m.text()) && !provoked) {
           list.push(`console error: ${m.text()}`);
         }
       });
@@ -104,7 +117,8 @@ export const test = base.extend<Fixtures>({
         const { pathname } = new URL(r.url());
         const expected404 =
           r.status() === 404 && (UNBUILT_ROUTES.has(pathname) || pathname === NOT_FOUND_ROUTE);
-        if (r.status() >= 400 && !expected404) list.push(`${r.status()} ${r.url()}`);
+        const provoked = new URL(r.url()).origin === API_ORIGIN && api.provoked.has(r.status());
+        if (r.status() >= 400 && !expected404 && !provoked) list.push(`${r.status()} ${r.url()}`);
       });
       page.on('pageerror', (e) => list.push(`page error: ${e.message}`));
       await use(undefined);
