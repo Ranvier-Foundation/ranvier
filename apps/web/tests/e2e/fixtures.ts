@@ -108,7 +108,9 @@ export const test = base.extend<Fixtures>({
       page.on('console', (m) => {
         // 404s are checked on the response below (unbuilt nav routes are prefetched).
         const failed = /Failed to load resource.*status of (\d{3})/.exec(m.text());
-        const provoked = failed?.[1] !== undefined && api.provoked.has(Number(failed[1]));
+        const provoked =
+          (failed?.[1] !== undefined && api.provoked.has(Number(failed[1]))) ||
+          (api.aborts > 0 && /Failed to load resource: net::ERR_FAILED/.test(m.text()));
         if (m.type() === 'error' && !/Failed to load resource.*404/.test(m.text()) && !provoked) {
           list.push(`console error: ${m.text()}`);
         }

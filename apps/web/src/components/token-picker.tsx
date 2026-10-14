@@ -119,7 +119,8 @@ export function TokenPicker({ onSelect, onClose }: TokenPickerProps) {
   let statusText = '';
   if (tokens.status === 'loading') statusText = t('picker.loading');
   else if (tokens.status === 'ready') {
-    statusText = flat.length === 0 ? t('picker.empty') : tPlural('picker.count', flat.length);
+    statusText =
+      flat.length === 0 ? t('picker.status.empty') : tPlural('picker.count', flat.length);
   }
 
   return (
@@ -227,7 +228,13 @@ export function TokenPicker({ onSelect, onClose }: TokenPickerProps) {
         {statusText}
       </p>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* Focusable so a keyboard user can scroll it (WCAG 2.1.1); options are reached with the arrow keys from the search field. */}
+      <div
+        role="region"
+        aria-label={t('picker.region.label')}
+        tabIndex={0}
+        className="min-h-0 flex-1 overflow-y-auto focus-visible:-outline-offset-2"
+      >
         {chains.status === 'error' ? (
           <ErrorBox
             message={t(

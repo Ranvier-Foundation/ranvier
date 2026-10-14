@@ -116,5 +116,7 @@
   "picker.screen.selected.title": "Token chosen",
   "picker.screen.selected.body": "{token} on {chain}",
   "picker.screen.selected.note": "The swap screen does not take a chosen token yet.",
-  "picker.screen.selected.unknown": "Token {address}"
+  "picker.screen.selected.unknown": "Token {address}",
+  "picker.status.empty": "No results",
+  "picker.region.label": "Token results"
 }

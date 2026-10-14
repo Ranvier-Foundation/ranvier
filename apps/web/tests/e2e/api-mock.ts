@@ -124,6 +124,8 @@ export class MockApi {
   readonly requests: ApiRequest[] = [];
   /** Error statuses this test asked for on purpose; the shared page checks let them pass. */
   readonly provoked = new Set<number>();
+  /** Requests this test made fail at the network level on purpose. */
+  aborts = 0;
   private overrides: Override[] = [];
 
   /** Adds an override, tried before the defaults (the last one added is tried first). */
@@ -210,14 +212,24 @@ export class MockApi {
       reply = fn(req);
       if (reply) break;
     }
-    reply ??= this.fallback(req);
+    // An override that only sets a delay (or a status) keeps the normal answer's body.
+    reply =
+      !reply ||
+      (reply.json === undefined &&
+        reply.raw === undefined &&
+        !reply.abort &&
+        reply.status === undefined)
+        ? { ...this.fallback(req), ...reply }
+        : reply;
     if (reply.delayMs) await new Promise((r) => setTimeout(r, reply.delayMs));
     const status = reply.status ?? 200;
     if (status >= 400) this.provoked.add(status);
     const noStore = req.path === '/v1/balances';
     try {
-      if (reply.abort) await route.abort('failed');
-      else {
+      if (reply.abort) {
+        this.aborts++;
+        await route.abort('failed');
+      } else {
         await route.fulfill({
           status,
           headers: {
