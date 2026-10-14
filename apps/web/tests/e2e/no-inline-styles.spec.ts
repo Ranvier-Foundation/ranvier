@@ -102,6 +102,25 @@ for (const { width, height } of WIDTHS) {
       await expectNoInlineStyles(page);
     });
 
+    test('select token picker: loaded, searched, chain chosen, keyboard row active', async ({
+      page,
+    }) => {
+      await watch(page);
+      await installWallets(page);
+      await page.goto('/select-token');
+      await hydrated(page);
+      const picker = page.getByRole('dialog', { name: 'Select a token' });
+      await expect(picker.getByRole('option').first()).toBeVisible();
+      await expectNoInlineStyles(page);
+      await picker.getByRole('button', { name: 'Base', exact: true }).click();
+      await expect(picker.getByRole('option')).toHaveCount(2);
+      await page.keyboard.press('ArrowDown');
+      await picker.getByRole('combobox').fill('zzzz');
+      await expect(picker.getByText(/^No tokens match/)).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await expectNoInlineStyles(page);
+    });
+
     test('unknown route is a 404 with no inline styles', async ({ page }) => {
       await watch(page);
       const response = await page.goto(NOT_FOUND_ROUTE);

@@ -110,14 +110,11 @@ test.describe('layout against the canvas (WebTokenSelect, MobileTokenSelect)', (
     const selected = chip(page, 'Base');
     const other = chip(page, 'Ethereum');
     expect(await box(selected)).toMatchObject({ height: 36 });
-    expect(
-      await styles(selected, ['background-color', 'color', 'font-size', 'font-weight']),
-    ).toEqual({
-      'background-color': RGB.primary,
-      color: RGB.white,
-      'font-size': '13px',
-      'font-weight': '500',
-    });
+    // Colours fade in 150 ms: wait for the end of the fade, then read.
+    await expect(selected).toHaveCSS('background-color', RGB.primary);
+    await expect(selected).toHaveCSS('color', RGB.white);
+    await expect(selected).toHaveCSS('font-size', '13px');
+    await expect(selected).toHaveCSS('font-weight', '500');
     expect(await styles(other, ['background-color', 'color', 'border-radius'])).toEqual({
       'background-color': RGB.pill,
       color: RGB.ink,

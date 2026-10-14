@@ -51,7 +51,9 @@ export function useBalances(
         return { address, byChain: next };
       });
 
-    // A chain that left the screen: stop its request and forget its half-done state.
+    // `running` keeps a chain's controller after its request finished, so a render that still holds
+    // the old state never starts the same request twice; a retry or a new wallet clears it.
+    // A chain that left the screen: stop its request and forget its state.
     for (const [key, controller] of running) {
       if (needed.has(key)) continue;
       controller.abort();
@@ -60,7 +62,7 @@ export function useBalances(
     }
     for (const key of needed) {
       const known = store.byChain.get(key);
-      if (running.has(key) || (known !== undefined && known.status !== 'loading')) continue;
+      if (running.has(key) || known !== undefined) continue;
       const chain = chains.find((c) => c.key === key);
       if (!chain) continue;
       if (!chain.balances) {
@@ -73,12 +75,10 @@ export function useBalances(
       fetchBalances(key, address, controller.signal)
         .then((answer) => {
           if (controller.signal.aborted) return;
-          running.delete(key);
           set(key, { status: 'ready', byAddress: answer.byAddress });
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted || isAbort(err)) return;
-          running.delete(key);
           set(key, { status: 'error' });
         });
     }
