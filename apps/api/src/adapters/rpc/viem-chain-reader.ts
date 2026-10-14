@@ -92,7 +92,12 @@ export interface ViemChainReaderOptions {
   retryDelayMs?: number;
   /** viem endpoint ranking: every endpoint sampled every `intervalMs` (last 10 samples). */
   rank?: false | { intervalMs: number };
-  /** An unreachable endpoint is asked for its chain ID again after this (default 30 s). */
+  /**
+   * Timeout of the one-off `eth_chainId` proof (default 5000 ms): longer than a read, because the
+   * first request to a host also pays for DNS and the TLS handshake.
+   */
+  verifyTimeoutMs?: number;
+  /** An unreachable endpoint is asked for its chain ID again after this (default 10 s). */
   reverifyAfterMs?: number;
   /** A block older than this is stale (default 300 s). */
   maxBlockAgeSeconds?: number;
@@ -200,6 +205,7 @@ export class ViemChainReader implements ChainReader {
   private readonly chains = new Map<number, ChainState>();
   private readonly requestTimeoutMs: number;
   private readonly reverifyAfterMs: number;
+  private readonly verifyTimeoutMs: number;
   private readonly maxBlockAgeSeconds: bigint;
   private readonly maxClockSkewSeconds: bigint;
   private readonly maxRewindSeconds: bigint;
@@ -213,7 +219,8 @@ export class ViemChainReader implements ChainReader {
 
   constructor(opts: ViemChainReaderOptions) {
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 1_500;
-    this.reverifyAfterMs = opts.reverifyAfterMs ?? 30_000;
+    this.reverifyAfterMs = opts.reverifyAfterMs ?? 10_000;
+    this.verifyTimeoutMs = opts.verifyTimeoutMs ?? 5_000;
     this.maxBlockAgeSeconds = BigInt(opts.maxBlockAgeSeconds ?? 300);
     this.maxClockSkewSeconds = BigInt(opts.maxClockSkewSeconds ?? 60);
     this.maxRewindSeconds = BigInt(opts.maxRewindSeconds ?? 30);
@@ -520,7 +527,7 @@ export class ViemChainReader implements ChainReader {
     const client = createPublicClient({
       transport: http(ep.url, {
         fetchFn: (input, init) => this.fetch(input, init),
-        timeout: this.requestTimeoutMs,
+        timeout: this.verifyTimeoutMs,
         retryCount: 0,
         maxResponseBodySize: 4 * 1024,
       }),

@@ -147,6 +147,15 @@ describe('endpoint verification (eth_chainId)', () => {
     expectNoSecrets(lines);
   });
 
+  it('gives the chain ID proof its own timeout', async () => {
+    const { reader, lines } = setup({ [A]: { mode: 'hang' } }, { verifyTimeoutMs: 30 });
+    const started = Date.now();
+    await reader.verifyEndpoints();
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(reader.canRead(1)).toBe(false);
+    expect(lines.at(-1)).toMatchObject({ obj: { error: 'TimeoutError' } });
+  });
+
   it('keeps an endpoint pending when it answers a malformed chain ID', async () => {
     const { reader, lines } = setup({ [A]: { results: { eth_chainId: 'one' } } });
     await reader.verifyEndpoints();

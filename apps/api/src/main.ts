@@ -85,9 +85,9 @@ if (rpc.ignored.length > 0) {
   app.log.warn({ variables: rpc.ignored }, 'RPC variables for chains without balances ignored');
 }
 // Every endpoint must prove its chain (eth_chainId) before it serves a balance; one pointed at
-// another chain is dropped. Unreachable ones are asked again every minute.
+// another chain is dropped. Unreachable ones are asked again every 30 s.
 await reader.verifyEndpoints();
-setInterval(() => void reader.verifyEndpoints(), 60_000).unref();
+setInterval(() => void reader.verifyEndpoints(), 30_000).unref();
 
 // The signer address and key ARN only: never credentials.
 app.log.info(

@@ -47,7 +47,7 @@ Before every production release, on the production host:
 
 ## Health checks and failover (what the API does)
 
-- **Chain ID proof.** At startup every endpoint must answer `eth_chainId` with its chain before it serves anything. An endpoint that answers another chain is dropped until restart and logged as an error (`RPC endpoint serves another chain; dropped (check its env var)`, with the label such as `RPC_URLS_EVM_8453[1]`). Fix the variable and restart. One that cannot be reached is logged as `RPC endpoint unreachable; will retry` and asked again every 60 s.
+- **Chain ID proof.** At startup every endpoint must answer `eth_chainId` with its chain before it serves anything. An endpoint that answers another chain is dropped until restart and logged as an error (`RPC endpoint serves another chain; dropped (check its env var)`, with the label such as `RPC_URLS_EVM_8453[1]`). Fix the variable and restart. One that cannot be reached is logged as `RPC endpoint unreachable; will retry` and asked again every 30 s (5 s timeout per attempt).
 - **Failover.** A request that fails with a timeout, a connection error, HTTP 5xx or 429 or a rate-limit code moves to the next endpoint, then retries the whole list once.
 - **Ranking.** Every 30 s each endpoint is sampled with `eth_blockNumber`; endpoints are ordered by stability and latency over the last 10 samples.
 - **Data checks.** Every read checks `block.chainid`, the block's age (300 s at most) and that it is not rewound against the newest block seen. A read that fails a check is refused (`balance read refused`, with the reason) rather than served.
