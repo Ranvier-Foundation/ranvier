@@ -400,6 +400,82 @@ describe('wallet addresses never reach the logs', () => {
     expect(text).toContain('rejected request');
   });
 
+  it('never logs a malformed, truncated or BOM-prefixed body, nor any RPC host or key', async () => {
+    const A = `https://rpc-a.example/v2/${KEY}`;
+    const rpc = new FakeRpc();
+    rpc.nodes.set(A, node());
+    const lines: string[] = [];
+    const sink = (o: object, m: string) => lines.push(JSON.stringify({ o, m }));
+    const reader = new ViemChainReader({
+      endpoints: new Map([[1, [{ url: A, label: 'RPC_URLS_EVM_1[0]' }]]]),
+      fetch: rpc.fetch,
+      log: { info: sink, warn: sink, error: sink },
+      now: () => Number(node().timestamp) * 1000,
+    });
+    await reader.verifyEndpoints();
+    const service = new BalanceService({ reader, servedChainIds: [1] });
+    const app = buildServer({
+      providers: [],
+      servedChainIds: [1],
+      balances: { service, deadlineMs: 500 },
+      logger: { stream: { write: (line: string) => lines.push(line) }, level: 'debug' },
+    });
+    const hex = OWNER.slice(2);
+    const bodies = [
+      // V8 quotes the text around an unexpected token: here, the start of the address.
+      `{"chain":"evm:1","address":"x","note":${hex}}`,
+      `{"address":"${OWNER}","chain":evm:1}`,
+      // Truncated.
+      `{"chain":"evm:1","address":"${OWNER}`,
+      `{"chain":"evm:1","address":"${OWNER}",`,
+      // Byte order mark.
+      `\uFEFF{"chain":"evm:1","address":"${OWNER}"}`,
+      `\uFEFF${hex}`,
+    ];
+    const statuses: number[] = [];
+    for (const payload of bodies) {
+      const res = await post(app, payload);
+      statuses.push(res.statusCode);
+      // A 200 (a BOM Fastify accepts) answers with the address; an error never echoes it.
+      if (res.statusCode !== 200) expect(res.body.toLowerCase()).not.toContain(hex.slice(0, 8));
+    }
+    expect(statuses.every((s) => s === 400 || s === 200)).toBe(true);
+    expect(lines.filter((l) => l.includes('rejected request')).length).toBeGreaterThanOrEqual(4);
+    for (const line of lines) {
+      expect(line.toLowerCase()).not.toContain(hex.slice(0, 8));
+      expect(line).not.toContain(KEY);
+      expect(line).not.toMatch(/rpc-a\.example/);
+    }
+  });
+
+  it('logs any client error by name and code only, never by its message', async () => {
+    // Fastify 5's own parser errors carry fixed messages today; this pins the error handler's
+    // rule for any 4xx whose message quotes request data (a future parser, plugin or route).
+    const lines: string[] = [];
+    const app = buildServer({
+      providers: [],
+      logger: { stream: { write: (line: string) => lines.push(line) }, level: 'debug' },
+    });
+    app.post('/v1/echo-test', async () => {
+      throw Object.assign(new Error(`cannot parse ${OWNER} via https://rpc-a.example/${KEY}`), {
+        statusCode: 400,
+        code: 'TEST_ECHO',
+      });
+    });
+    const res = await app.inject({ method: 'POST', url: '/v1/echo-test' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalid_request' });
+    const rejected = lines.map((l) => JSON.parse(l) as { msg: string; err?: unknown });
+    expect(rejected.find((l) => l.msg === 'rejected request')?.err).toEqual({
+      name: 'Error',
+      code: 'TEST_ECHO',
+    });
+    const text = lines.join('\n').toLowerCase();
+    expect(text).not.toContain(OWNER.slice(2, 10));
+    expect(text).not.toContain(KEY.toLowerCase());
+    expect(text).not.toContain('rpc-a.example');
+  });
+
   it('installs the serializer for the production logger too (logger: true)', async () => {
     const app = buildServer({ providers: [], logger: true });
     expect(app.log.level).toBe('info');
