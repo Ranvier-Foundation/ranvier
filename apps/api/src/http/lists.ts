@@ -20,7 +20,7 @@ export interface ChainView {
   /** True when this API can quote swaps on the chain right now. */
   quoting: boolean;
   /**
-   * True when GET /v1/balances can read the chain right now: it has a curated token list and at
+   * True when POST /v1/balances can read the chain right now: it has a curated token list and at
    * least one RPC endpoint that proved it serves this chain (ADR 0009).
    */
   balances: boolean;

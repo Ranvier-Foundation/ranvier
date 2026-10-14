@@ -35,7 +35,7 @@ export interface ServerDeps {
   webOrigins?: readonly string[];
   /** EVM chain IDs listed by GET /v1/chains (ZEROX_CHAIN_IDS). Default: none. */
   servedChainIds?: readonly number[];
-  /** GET /v1/balances (ADR 0009). Unset: the route answers 503 `rpc_unavailable`. */
+  /** POST /v1/balances (ADR 0009). Unset: no chain is served (`400 invalid_request`). */
   balances?: { service: BalanceService; deadlineMs?: number };
   /** When set, quotes include a signed fee-wrapper transaction. */
   signing?: {
@@ -66,8 +66,8 @@ function errSummary(err: unknown): { name: string; message: string } {
 
 /**
  * The request as logged by Fastify ("incoming request"). Its default serializer logs `req.url`
- * with the query string, which for GET /v1/balances is a wallet address: personal data that must
- * never reach the logs (ADR 0009). Only the path is logged, for every route.
+ * with the query string, which may hold a wallet address: personal data that must never reach
+ * the logs (ADR 0009). Only the path is logged, for every route.
  */
 export function requestLogSerializer(req: FastifyRequest): Record<string, unknown> {
   const q = req.url.indexOf('?');

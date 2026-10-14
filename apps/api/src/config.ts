@@ -151,7 +151,7 @@ const envSchema = z
       .int()
       .refine((v) => v === 0 || (v >= 1_000 && v <= 600_000), 'must be 0 or 1000..600000')
       .default(30_000),
-    /** Deadline of one GET /v1/balances request, queueing included. */
+    /** Deadline of one POST /v1/balances request, queueing included. */
     BALANCES_DEADLINE_MS: z.coerce.number().int().min(500).max(10_000).default(3_000),
     /** How long one wallet's balances are reused (in memory, per process). */
     BALANCES_CACHE_TTL_MS: z.coerce.number().int().min(0).max(60_000).default(3_000),
