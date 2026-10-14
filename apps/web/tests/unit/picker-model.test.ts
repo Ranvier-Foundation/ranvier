@@ -3,6 +3,7 @@ import type { ApiChain, ApiToken } from '../../src/lib/api/schemas';
 import { formatTokenAmount } from '../../src/lib/format';
 import {
   buildRows,
+  collidingSymbols,
   quickPicks,
   splitSections,
   type ChainBalances,
@@ -90,6 +91,43 @@ describe('normaliseQuery', () => {
       expect(normaliseQuery(raw).searchable).toBe(false);
     },
   );
+});
+
+describe('normaliseQuery and the connected wallet', () => {
+  const hex = WALLET.slice(2);
+  it.each([
+    ['the address', WALLET],
+    ['the address in capitals', `0x${hex.toUpperCase()}`],
+    ['the checksummed address', '0x7a3E1b2C9d4F5a60718293a4B5c6D7e8F9013F9c'],
+    ['the address without 0x', hex],
+    ['the address with spaces around it', `  ${WALLET}  `],
+    ['the address inside longer text', `usdc ${WALLET}`],
+  ])('will not send %s', (_label, raw) => {
+    expect(normaliseQuery(raw, WALLET).searchable).toBe(false);
+    expect(normaliseQuery(raw, WALLET.toUpperCase().replace('0X', '0x')).searchable).toBe(false);
+  });
+  it('still sends the same text with no wallet, and other addresses with a wallet', () => {
+    expect(normaliseQuery(WALLET).searchable).toBe(true);
+    expect(normaliseQuery(WALLET, undefined).searchable).toBe(true);
+    expect(normaliseQuery('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', WALLET).searchable).toBe(
+      true,
+    );
+    expect(normaliseQuery('usdc', WALLET).searchable).toBe(true);
+  });
+});
+
+describe('collidingSymbols', () => {
+  const rowsOf = (tokens: ApiToken[]) => buildRows(tokens, [base, eth], new Map(), undefined);
+  const USDC_ETH = tok(eth, 'USDC', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 6);
+  it('names symbols that more than one row shares, without case', () => {
+    const fake = tok(eth, 'usdc', '0x1111111111111111111111111111111111111111', 6);
+    expect([...collidingSymbols(rowsOf([USDC, USDC_ETH]))]).toEqual(['USDC']);
+    expect([...collidingSymbols(rowsOf([USDC, fake]))]).toEqual(['USDC']);
+  });
+  it('is empty when every symbol is unique on screen', () => {
+    expect(collidingSymbols(rowsOf([NATIVE, USDC, AERO])).size).toBe(0);
+    expect(collidingSymbols([]).size).toBe(0);
+  });
 });
 
 describe('rows and sections', () => {

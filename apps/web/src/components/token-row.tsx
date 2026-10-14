@@ -1,4 +1,4 @@
-import { formatTokenAmount } from '@/lib/format';
+import { formatTokenAmount, shortAddress } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import type { PickerRow } from '@/lib/picker/model';
 import { TokenAvatar } from './token-avatar';
@@ -23,6 +23,12 @@ export interface TokenRowProps {
   row: PickerRow;
   id: string;
   active: boolean;
+  /**
+   * Show the token's short address after the chain name. Set when another token on screen shares
+   * the symbol, so the user can tell them apart. Text only, never a link. A native coin has no
+   * address, so it shows none.
+   */
+  showAddress?: boolean;
   onPick: (row: PickerRow) => void;
 }
 
@@ -31,30 +37,37 @@ export interface TokenRowProps {
  * search field and the arrow keys move `aria-activedescendant` (combobox with listbox popup).
  * Everything the API sent is rendered as text.
  */
-export function TokenRow({ row, id, active, onPick }: TokenRowProps) {
+export function TokenRow({ row, id, active, showAddress = false, onPick }: TokenRowProps) {
   const { token, chain } = row;
   const balance = balanceText(row);
   const params = { symbol: token.symbol, name: token.name, chain: chain.name };
+  const address =
+    showAddress && token.address !== 'native' ? shortAddress(token.address) : undefined;
+  const label =
+    balance === undefined
+      ? t('picker.row.label', params)
+      : t('picker.row.label.balance', { ...params, amount: balance });
   return (
     <div
       role="option"
       id={id}
       aria-selected={active}
       data-active={active}
-      aria-label={
-        balance === undefined
-          ? t('picker.row.label', params)
-          : t('picker.row.label.balance', { ...params, amount: balance })
-      }
+      aria-label={address === undefined ? label : t('picker.row.label.address', { label, address })}
       onClick={() => onPick(row)}
       className="flex min-h-64 cursor-pointer items-center gap-14 px-12 transition hover:bg-bg max-narrow:gap-12"
     >
       <TokenAvatar symbol={token.symbol} chain={chain.key} />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{token.symbol}</span>
-        <span className="block truncate text-caption text-sub">
-          <span className="max-narrow:hidden">{t('picker.row.name', { name: token.name })}</span>
-          {chain.name}
+        <span className="flex gap-4 text-caption text-sub">
+          <span className="min-w-0 truncate">
+            <span className="max-narrow:hidden">{t('picker.row.name', { name: token.name })}</span>
+            {chain.name}
+          </span>
+          {address === undefined ? null : (
+            <span className="addr shrink-0">{t('picker.row.address', { address })}</span>
+          )}
         </span>
       </span>
       {row.balance.state === 'loading' ? (

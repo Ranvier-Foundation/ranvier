@@ -1,10 +1,25 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page, Request } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { API_ORIGIN, BALANCES, CHAINS, TOKENS, WALLET, type MockApi } from './api-mock';
-import { box, hydrated, RGB, styles } from './helpers';
 import {
+  API_ORIGIN,
+  BALANCES,
+  CHAINS,
+  TOKENS,
+  WALLET,
+  answersOutliveAbort,
+  balancesAnswer,
+  deferred,
+  type ApiRequest,
+  type ChainKey,
+  type MockApi,
+  type OutliveAbort,
+} from './api-mock';
+import { afterRender, box, hydrated, RGB, styles } from './helpers';
+import {
+  ACCOUNT_B,
   DEFAULT_WALLET,
+  fake,
   installWallets,
   unexpectedWalletCalls,
   walletCalls,
@@ -285,9 +300,10 @@ test.describe('data comes only from the API', () => {
     const names = await optionNames(page);
     expect(names.slice(0, 4)).toEqual([
       'ETH, Ether, Ethereum, balance 0.0841',
-      'USDC, USD Coin, Ethereum, balance 2,410.50',
+      // USDC is listed on three chains, so its rows also name their short address.
+      'USDC, USD Coin, Ethereum, balance 2,410.50, address 0xa0b8…eb48',
       'ETH, Ether, Base, balance 1.5',
-      'USDC, USD Coin, Base, balance 640.00',
+      'USDC, USD Coin, Base, balance 640.00, address 0x8335…2913',
     ]);
     expect(names[4]).toBe('DAI, Dai Stablecoin, Ethereum');
     await expect(dialog(page).getByText('Other tokens')).toBeVisible();
@@ -445,6 +461,52 @@ test.describe('chain switching, search and stale answers', () => {
     await expect(options(page).first()).toContainText('USDC');
   });
 
+  test('the connected wallet address is never sent as search text', async ({ page, api }) => {
+    await openConnected(page);
+    await expect(dialog(page).getByText('Your tokens')).toBeVisible();
+    const sent = api.calls('tokens').length;
+    for (const text of [WALLET, WALLET.toLowerCase(), WALLET.slice(2).toUpperCase()]) {
+      await search(page).fill(text);
+      await expect(dialog(page).getByText(/^No tokens match\./)).toBeVisible();
+      await expect(options(page)).toHaveCount(0);
+    }
+    await page.waitForTimeout(500);
+    expect(api.calls('tokens')).toHaveLength(sent);
+    for (const r of api.requests) {
+      expect((r.path + r.search).toLowerCase()).not.toContain(WALLET.toLowerCase().slice(2));
+    }
+    // Another address is still searched.
+    await search(page).fill(TOKENS['evm:8453'][1]!.address);
+    await expect(options(page)).toHaveCount(1);
+  });
+
+  test('tokens that share a symbol show a short address as text; others show none', async ({
+    page,
+  }) => {
+    await open(page);
+    await expect(options(page).first()).toBeVisible();
+    const usdc = options(page).filter({ hasText: 'USDC' });
+    await expect(usdc).toHaveCount(3);
+    for (const [i, t] of [
+      TOKENS['evm:1'][1]!,
+      TOKENS['evm:8453'][1]!,
+      TOKENS['evm:42161'][1]!,
+    ].entries()) {
+      const short = `${t.address.slice(0, 6)}\u2026${t.address.slice(-4)}`;
+      await expect(usdc.nth(i).locator('.addr')).toHaveText(`\u00B7 ${short}`);
+      await expect(usdc.nth(i)).toHaveAttribute('aria-label', new RegExp(`address ${short}$`));
+      // Text only: nothing inside the row is a link.
+      await expect(usdc.nth(i).locator('a, [href]')).toHaveCount(0);
+    }
+    // The native coin has no address; a symbol that is unique on screen shows none.
+    await expect(options(page).filter({ hasText: 'DAI' }).locator('.addr')).toHaveCount(0);
+    await expect(options(page).filter({ hasText: 'ETH' }).first().locator('.addr')).toHaveCount(0);
+    // One chain: no symbol is shared, so no row shows an address.
+    await chip(page, 'Base').click();
+    await expect(options(page)).toHaveCount(2);
+    await expect(dialog(page).locator('.addr')).toHaveCount(0);
+  });
+
   test('closing aborts requests that are still running', async ({ page, api }) => {
     const abortedRequests = aborted(page);
     api.override((r) => (r.path === '/v1/tokens' ? { delayMs: 5000, json: [] } : undefined));
@@ -455,6 +517,267 @@ test.describe('chain switching, search and stale answers', () => {
     await expect(page).toHaveURL('/');
     await expect.poll(() => abortedRequests.filter((a) => a.path === '/v1/tokens').length).toBe(3);
   });
+});
+
+/**
+ * Answers that arrive after the picker has moved on: another wallet, a disconnect, a newer search,
+ * another chain choice, a retry. Each case runs twice: as the browser really behaves (the page
+ * aborts the request, so the answer never arrives), and in the worst case, where the answer still
+ * reaches the page's code after the abort (see `answersOutliveAbort`). In both, the held answer
+ * is released only after the picker has moved on, and nothing of it may be on screen. The hooks are
+ * also tested directly in tests/unit/picker-hooks.test.tsx.
+ */
+const ARRIVAL = [
+  { name: 'the page aborts the request', outlive: false },
+  { name: 'the answer arrives although the page aborted the request', outlive: true },
+] as const;
+
+const addressOf = (r: ApiRequest) => (r.body as { address: string }).address.toLowerCase();
+const chainOf = (r: ApiRequest) => (r.body as { chain: ChainKey }).chain;
+const OTHER_WALLET = ACCOUNT_B.toLowerCase();
+
+/**
+ * Releases a held answer, waits until the page has it (when it can arrive at all) and has rendered
+ * whatever it made of it.
+ */
+async function release(
+  page: Page,
+  late: OutliveAbort | undefined,
+  gate: { release: () => void },
+  answers: number,
+) {
+  const before = (await late?.count()) ?? 0;
+  gate.release();
+  if (late) await late.until(before + answers);
+  await afterRender(page);
+}
+
+for (const arrival of ARRIVAL) {
+  test.describe(`late answers: ${arrival.name}`, () => {
+    const arm = (page: Page) => (arrival.outlive ? answersOutliveAbort(page) : undefined);
+
+    /** Holds every balance answer for the fixture wallet; any other wallet holds nothing. */
+    function holdFirstWallet(api: MockApi) {
+      const held = deferred();
+      api.override((r) => {
+        if (r.path !== '/v1/balances') return undefined;
+        return addressOf(r) === WALLET.toLowerCase()
+          ? { gate: held.promise }
+          : { json: balancesAnswer(chainOf(r), addressOf(r)) };
+      });
+      return held;
+    }
+    const heldByFirstWallet = (api: MockApi) =>
+      api.calls('balances').filter((r) => addressOf(r) === WALLET.toLowerCase());
+
+    test('switching the connected account: nothing of the old wallet is shown', async ({
+      page,
+      api,
+    }) => {
+      const late = await arm(page);
+      const held = holdFirstWallet(api);
+      await openConnected(page);
+      await expect.poll(() => heldByFirstWallet(api).length).toBe(3);
+      await expect(dialog(page).getByText('Loading your balances')).toBeVisible();
+
+      await fake(page, (w) =>
+        w.__emit('accountsChanged', ['0x1111111111111111111111111111111111112222']),
+      );
+      await expect(
+        page.getByRole('banner').getByRole('button', { name: 'Wallet 0x1111…2222' }),
+      ).toBeVisible();
+      // The new wallet is read on its own and holds nothing.
+      await expect(dialog(page).getByText('Loading your balances')).toHaveCount(0);
+      expect(
+        api
+          .calls('balances')
+          .filter((r) => addressOf(r) === OTHER_WALLET)
+          .map(chainOf)
+          .sort(),
+      ).toEqual(['evm:1', 'evm:42161', 'evm:8453']);
+
+      await release(page, late, held, 3);
+      await expect(dialog(page).getByText('Your tokens')).toHaveCount(0);
+      await expect(options(page).locator('.num')).toHaveCount(0);
+      await expect(dialog(page).getByText('Could not load your balances')).toHaveCount(0);
+      // Still true once the list is reshaped by a chain choice.
+      await chip(page, 'Base').click();
+      await expect(options(page)).toHaveCount(TOKENS['evm:8453'].length);
+      await expect(dialog(page).getByText('Your tokens')).toHaveCount(0);
+      await expect(options(page).locator('.num')).toHaveCount(0);
+    });
+
+    test('disconnecting the wallet: nothing of its answer is shown', async ({ page, api }) => {
+      const late = await arm(page);
+      const held = holdFirstWallet(api);
+      await openConnected(page);
+      await expect.poll(() => heldByFirstWallet(api).length).toBe(3);
+
+      await fake(page, (w) => w.__emit('accountsChanged', []));
+      await expect(
+        page.getByRole('banner').getByRole('button', { name: 'Connect wallet' }),
+      ).toBeVisible();
+      await expect(dialog(page).getByText('Connect a wallet to see your balances.')).toBeVisible();
+      await expect(dialog(page).getByText('Loading your balances')).toHaveCount(0);
+
+      await release(page, late, held, 3);
+      await expect(dialog(page).getByText('Your tokens')).toHaveCount(0);
+      await expect(options(page).locator('.num')).toHaveCount(0);
+      await expect(dialog(page).getByText('Connect a wallet to see your balances.')).toBeVisible();
+      // Nothing was asked for the wallet after it left.
+      expect(api.calls('balances')).toHaveLength(3);
+    });
+
+    test('a retry: the answer of the first try is not shown while the second is still loading', async ({
+      page,
+      api,
+    }) => {
+      const late = await arm(page);
+      const first = deferred();
+      const second = deferred();
+      let ethereumTries = 0;
+      let down = true;
+      api.override((r) => {
+        if (r.path !== '/v1/balances') return undefined;
+        if (chainOf(r) === 'evm:1') {
+          ethereumTries++;
+          // The first try's answer holds balances; the second try's holds none.
+          return ethereumTries === 1
+            ? { gate: first.promise }
+            : { gate: second.promise, json: balancesAnswer('evm:1', addressOf(r)) };
+        }
+        return down
+          ? { status: 503, json: { error: 'rpc_unavailable' } }
+          : { json: balancesAnswer(chainOf(r), addressOf(r)) };
+      });
+      await openConnected(page);
+      const retry = dialog(page).getByRole('button', { name: 'Try again' });
+      await expect(retry).toBeVisible();
+      down = false;
+      await retry.click();
+      await expect.poll(() => ethereumTries).toBe(2);
+      await expect(dialog(page).getByText('Loading your balances')).toBeVisible();
+
+      await release(page, late, first, 1);
+      await expect(dialog(page).getByText('Your tokens')).toHaveCount(0);
+      await expect(options(page).locator('.num')).toHaveCount(0);
+      await expect(dialog(page).getByText('Loading your balances')).toBeVisible();
+      // The second try's own answer is the one that counts.
+      await release(page, late, second, 1);
+      await expect(dialog(page).getByText('Loading your balances')).toHaveCount(0);
+      await expect(dialog(page).getByText('Your tokens')).toHaveCount(0);
+    });
+
+    test('a newer search: the late answer of the older search is not shown', async ({
+      page,
+      api,
+    }) => {
+      const late = await arm(page);
+      const held = deferred();
+      // "usd" would list USDC; its answer is held.
+      api.override((r) =>
+        r.path === '/v1/tokens' && new URLSearchParams(r.search).get('q') === 'usd'
+          ? { gate: held.promise }
+          : undefined,
+      );
+      await open(page);
+      await chip(page, 'Ethereum').click();
+      await expect(options(page)).toHaveCount(TOKENS['evm:1'].length);
+      await search(page).fill('usd');
+      await expect
+        .poll(() => api.calls('tokens').filter((r) => r.search.includes('q=usd')).length)
+        .toBe(1);
+      await search(page).fill('dai');
+      await expect(options(page)).toHaveCount(1);
+      expect(await optionNames(page)).toEqual(['DAI, Dai Stablecoin, Ethereum']);
+
+      await release(page, late, held, 1);
+      expect(await optionNames(page)).toEqual(['DAI, Dai Stablecoin, Ethereum']);
+    });
+
+    test('another chain choice and back: the late answer of the first choice is not shown', async ({
+      page,
+      api,
+    }) => {
+      const late = await arm(page);
+      const first = deferred();
+      const second = deferred();
+      let ethereumTries = 0;
+      api.override((r) => {
+        if (r.path !== '/v1/tokens') return undefined;
+        const params = new URLSearchParams(r.search);
+        if (params.get('chain') !== 'evm:1') return undefined;
+        ethereumTries++;
+        // The first try would list nothing at all for Ethereum; the second lists everything.
+        return ethereumTries === 1
+          ? { gate: first.promise, json: [] }
+          : ethereumTries === 2
+            ? { gate: second.promise }
+            : undefined;
+      });
+      await open(page);
+      await expect(dialog(page).getByText('Loading tokens')).toBeAttached();
+      await chip(page, 'Base').click();
+      await expect(options(page)).toHaveCount(TOKENS['evm:8453'].length);
+      await chip(page, 'All').click();
+      await expect.poll(() => ethereumTries).toBe(2);
+      await expect(dialog(page).getByText('Loading tokens')).toBeAttached();
+      await expect(options(page)).toHaveCount(0);
+
+      await release(page, late, first, 1);
+      await expect(options(page)).toHaveCount(0);
+      await expect(dialog(page).getByText('Loading tokens')).toBeAttached();
+      await release(page, late, second, 1);
+      await expect(options(page)).toHaveCount(CHAINS.reduce((n, c) => n + TOKENS[c.key].length, 0));
+    });
+  });
+}
+
+test.describe('shared page checks', () => {
+  // `test.fail()`: this test passes only when the shared checks (fixtures.ts) reject the page.
+  test('a network failure the test did not cause still fails it, next to one it did', async ({
+    page,
+    api,
+  }) => {
+    test.fail();
+    let down = true;
+    // The failure this test asks for: the chain list, which the picker survives.
+    api.override((r) => (down && r.path === '/v1/chains' ? { abort: true } : undefined));
+    // One it does not ask for: another request to the API origin fails at the network level.
+    await page.route(`${API_ORIGIN}/v1/unrelated`, (route) => route.abort('failed'));
+    await open(page);
+    await expect(dialog(page).getByRole('alert')).toBeVisible();
+    down = false;
+    await page.evaluate(
+      (url) =>
+        fetch(url).then(
+          () => 'ok',
+          () => 'failed',
+        ),
+      `${API_ORIGIN}/v1/unrelated`,
+    );
+    await dialog(page).getByRole('button', { name: 'Try again' }).click();
+    await expect(options(page).first()).toBeVisible();
+  });
+});
+
+test.describe('the console never shows the wallet address', () => {
+  // Each passes only when the shared checks (fixtures.ts) reject the page. Levels that are not
+  // errors, so nothing else could make these tests fail.
+  for (const level of ['log', 'info', 'warn', 'debug'] as const) {
+    for (const [how, show] of [
+      ['lower case without 0x', (a: string) => a.toLowerCase().slice(2)],
+      ['checksummed', (a: string) => a],
+      ['inside an object', (a: string) => ({ wallet: a })],
+    ] as const) {
+      test(`console.${level}: ${how}`, async ({ page }) => {
+        test.fail();
+        await open(page);
+        const text = show(WALLET);
+        await page.evaluate(([lvl, t]) => console[lvl as 'log'](t), [level, text] as const);
+      });
+    }
+  }
 });
 
 test.describe('states', () => {
@@ -734,6 +1057,39 @@ test.describe('selection and keyboard', () => {
     await dialog(page).getByRole('button', { name: 'Close' }).click();
     await expect(page).toHaveURL('/');
     await open(page);
+    await page.mouse.click(10, 500);
+    await expect(page).toHaveURL('/');
+  });
+
+  test('a close made by the browser itself reaches React (native close event)', async ({
+    page,
+  }) => {
+    await open(page);
+    await dialog(page).evaluate((d: HTMLDialogElement) => d.close());
+    await expect(page).toHaveURL('/');
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test('a drag that starts in the panel and ends on the scrim does not close; a plain scrim click does', async ({
+    page,
+  }) => {
+    await open(page);
+    const title = dialog(page).getByRole('heading', { name: 'Select a token' });
+    const t = await box(title);
+    // Press inside the panel, release over the scrim.
+    await page.mouse.move(t.x + 4, t.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(10, 500);
+    await page.mouse.up();
+    await expect(page).toHaveURL(/\/select-token$/);
+    await expect(dialog(page)).toBeVisible();
+    // Press on the scrim, release inside the panel.
+    await page.mouse.move(10, 500);
+    await page.mouse.down();
+    await page.mouse.move(t.x + 4, t.y + 4);
+    await page.mouse.up();
+    await expect(dialog(page)).toBeVisible();
+    // Press and release on the scrim.
     await page.mouse.click(10, 500);
     await expect(page).toHaveURL('/');
   });

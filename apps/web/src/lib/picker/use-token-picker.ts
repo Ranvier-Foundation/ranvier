@@ -70,7 +70,7 @@ export function useTokenPicker(walletAddress: string | undefined): TokenPickerDa
   const [selection, setSelection] = useState<Selection>('all');
   const [query, setQuery] = useState('');
   const debounced = useDebounced(query, SEARCH_DEBOUNCE_MS);
-  const { query: appliedQuery, searchable } = normaliseQuery(debounced);
+  const { query: appliedQuery, searchable } = normaliseQuery(debounced, walletAddress);
 
   const [chains, setChains] = useState<ChainsState>({ status: 'loading' });
   const [chainsAttempt, setChainsAttempt] = useState(0);

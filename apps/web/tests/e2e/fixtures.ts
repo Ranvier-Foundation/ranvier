@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test as base, expect, type Page } from '@playwright/test';
 import { API_ORIGIN, installApi, type MockApi } from './api-mock';
+import { ACCOUNT_A, ACCOUNT_B } from './wallet-fixture';
 import { NOT_FOUND_ROUTE, UNBUILT_ROUTES } from './routes';
 
 export { expect };
@@ -105,14 +106,36 @@ export const test = base.extend<Fixtures>({
           list.push(`third-party request: ${r.url()}`);
         }
       });
+      // Every console message with its arguments read as data (an object logged with the address
+      // in it shows as "JSHandle@object" in the text alone).
+      const consoleLog: Promise<{ type: string; text: string }>[] = [];
       page.on('console', (m) => {
+        const text = m.text();
+        consoleLog.push(
+          Promise.all(
+            m.args().map((a) =>
+              a
+                .jsonValue()
+                .then((v: unknown) => JSON.stringify(v) ?? '')
+                .catch(() => ''),
+            ),
+          ).then((values) => ({ type: m.type(), text: `${text} ${values.join(' ')}` })),
+        );
         // 404s are checked on the response below (unbuilt nav routes are prefetched).
-        const failed = /Failed to load resource.*status of (\d{3})/.exec(m.text());
-        const provoked =
-          (failed?.[1] !== undefined && api.provoked.has(Number(failed[1]))) ||
-          (api.aborts > 0 && /Failed to load resource: net::ERR_FAILED/.test(m.text()));
-        if (m.type() === 'error' && !/Failed to load resource.*404/.test(m.text()) && !provoked) {
-          list.push(`console error: ${m.text()}`);
+        const failed = /Failed to load resource.*status of (\d{3})/.exec(text);
+        let provoked = failed?.[1] !== undefined && api.provoked.has(Number(failed[1]));
+        // A network failure is let through only when it is one the test caused, matched by URL and
+        // count: any other failed request (an RPC call, another API path) still fails the test.
+        if (/Failed to load resource: net::ERR_FAILED/.test(text)) {
+          const url = m.location().url;
+          const left = api.abortedUrls.get(url) ?? 0;
+          if (left > 0) {
+            api.abortedUrls.set(url, left - 1);
+            provoked = true;
+          }
+        }
+        if (m.type() === 'error' && !/Failed to load resource.*404/.test(text) && !provoked) {
+          list.push(`console error: ${text}`);
         }
       });
       page.on('response', (r) => {
@@ -126,6 +149,24 @@ export const test = base.extend<Fixtures>({
       await use(undefined);
       if (!pageChecks) return;
       await settle(page);
+      // The wallet address never goes to the console, at any level (log, info, warn, error,
+      // debug), in either case, with or without 0x. The wallets are the fixture accounts and every
+      // address the page sent to the API as a wallet.
+      const wallets = new Set(
+        [
+          ACCOUNT_A,
+          ACCOUNT_B,
+          ...api.calls('balances').map((r) => (r.body as { address?: unknown } | null)?.address),
+        ]
+          .filter((a): a is string => typeof a === 'string')
+          .map((a) => a.toLowerCase().replace(/^0x/, '')),
+      );
+      for (const { type, text } of await Promise.all(consoleLog)) {
+        const lower = text.toLowerCase();
+        if ([...wallets].some((hex) => hex !== '' && lower.includes(hex))) {
+          list.push(`console ${type} contains a wallet address`);
+        }
+      }
       const cspProblems = [
         ...csp.violations.map(
           (v) => `CSP ${v.disposition} ${v.directive}: ${v.blocked} ${v.sample}`,

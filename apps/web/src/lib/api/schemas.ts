@@ -46,6 +46,72 @@ function text(value: unknown, path: string, max: number): string {
   return value;
 }
 
+/**
+ * Token symbols are ASCII only: letters, digits, `.`, `+` and `-`, 1 to 32 characters. That
+ * refuses look-alike scripts (Cyrillic, Greek), fullwidth forms, mathematical alphanumerics,
+ * blank-rendering characters (Hangul filler, braille blank), combining marks and every kind of
+ * space, because a symbol is what a user reads to tell tokens apart (ADR 0010).
+ */
+const TOKEN_SYMBOL = /^[A-Za-z0-9.+-]{1,32}$/;
+
+export function tokenSymbol(value: unknown, path: string): string {
+  if (typeof value !== 'string' || !TOKEN_SYMBOL.test(value)) throw new SchemaError(path);
+  return value;
+}
+
+/**
+ * Token names may use letters and the few symbols real names need, from one writing system.
+ * Allowed characters, and nothing else: letters (`\p{L}`), currency signs (`\p{Sc}`, for names such
+ * as `USD₮0`) and printable ASCII (digits, punctuation, the space). So refused are: combining
+ * marks (`\p{M}`, no stacking), every space but U+0020 (no-break, ideographic, thin), non-ASCII
+ * digits, braille blanks and other symbols, and emoji. Markup characters are allowed: names are
+ * only ever rendered as text. Further:
+ * - a double space is refused (a run of spaces reads as blank);
+ * - blank-rendering letters (Unicode `Default_Ignorable_Code_Point`: Hangul fillers U+115F,
+ *   U+1160, U+3164, U+FFA0, Khmer inherent vowels, variation selectors) are refused;
+ * - the text must be stable under NFKC, which refuses fullwidth forms, mathematical
+ *   alphanumerics, ligatures and other compatibility look-alikes;
+ * - all letters come from one writing system: Latin (Basic Latin, Latin-1 Supplement and Latin
+ *   Extended-A only, which leaves out IPA and click letters), Greek, Cyrillic, Hebrew, Arabic,
+ *   Hangul, or Japanese (Han, Hiragana and Katakana together). Letters of any other script are
+ *   refused, so `USD Сoin` (Cyrillic С) fails.
+ * Control, format (bidirectional, zero-width) and separator characters, and padding, are refused
+ * first by `text`. A name written wholly in one script (all-Cyrillic `СОРА`) can still resemble
+ * another word; the row's short address tells such tokens apart (ADR 0010).
+ */
+const NAME_CHARS = /^[\p{L}\p{Sc}\u0020-\u007E]+$/u;
+const BLANK_RENDERING = /\p{Default_Ignorable_Code_Point}/u;
+const LETTER = /\p{L}/u;
+const LETTER_SYSTEMS: readonly (readonly [string, RegExp])[] = [
+  ['latin', /^[A-Za-z\u00C0-\u00FF\u0100-\u017F]$/],
+  ['greek', /^\p{scx=Greek}$/u],
+  ['cyrillic', /^\p{scx=Cyrillic}$/u],
+  ['hebrew', /^\p{scx=Hebrew}$/u],
+  ['arabic', /^\p{scx=Arabic}$/u],
+  ['hangul', /^\p{scx=Hangul}$/u],
+  ['japanese', /^[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}]$/u],
+];
+
+export function tokenName(value: unknown, path: string, max: number): string {
+  const name = text(value, path, max);
+  if (
+    !NAME_CHARS.test(name) ||
+    BLANK_RENDERING.test(name) ||
+    name.includes('  ') ||
+    name.normalize('NFKC') !== name
+  ) {
+    throw new SchemaError(path);
+  }
+  let system: string | undefined;
+  for (const ch of name) {
+    if (!LETTER.test(ch)) continue;
+    const found = LETTER_SYSTEMS.find(([, re]) => re.test(ch));
+    if (!found || (system !== undefined && system !== found[0])) throw new SchemaError(path);
+    system = found[0];
+  }
+  return name;
+}
+
 function bool(value: unknown, path: string): boolean {
   if (typeof value !== 'boolean') throw new SchemaError(path);
   return value;
@@ -126,15 +192,24 @@ export interface ApiToken {
   tags: readonly TokenTag[];
 }
 
-/** Tokens for one chain. Every token must belong to `chain`; addresses must be unique. */
+/**
+ * Tokens for one chain. Every token must belong to `chain`; addresses and symbols (compared
+ * without case) must be unique within the answer.
+ */
 export function parseTokens(json: unknown, chain: ChainKey): ApiToken[] {
   const seen = new Set<string>();
+  const symbols = new Set<string>();
   return list(json, '(body)', MAX_TOKENS).map((raw, i) => {
     const o = record(raw, `[${i}]`);
     if (chainKey(o['chain'], `[${i}].chain`) !== chain) throw new SchemaError(`[${i}].chain`);
     const address = tokenAddress(o['address'], `[${i}].address`);
     if (seen.has(address)) throw new SchemaError(`[${i}].address`);
     seen.add(address);
+    // One symbol per chain, compared without case: two rows that read the same cannot be told apart.
+    const symbol = tokenSymbol(o['symbol'], `[${i}].symbol`);
+    const symbolKey = symbol.toUpperCase();
+    if (symbols.has(symbolKey)) throw new SchemaError(`[${i}].symbol`);
+    symbols.add(symbolKey);
     const logoUri = o['logoUri'];
     if (logoUri !== undefined && typeof logoUri !== 'string')
       throw new SchemaError(`[${i}].logoUri`);
@@ -143,8 +218,8 @@ export function parseTokens(json: unknown, chain: ChainKey): ApiToken[] {
     return {
       chain,
       address,
-      symbol: text(o['symbol'], `[${i}].symbol`, 32),
-      name: text(o['name'], `[${i}].name`, 64),
+      symbol,
+      name: tokenName(o['name'], `[${i}].name`, 64),
       decimals: int(o['decimals'], `[${i}].decimals`, 0, 36),
       // A tag this build does not know is ignored, not refused: tags only order and label rows.
       tags: (rawTags as string[]).filter((tag): tag is TokenTag => TOKEN_TAGS.has(tag)),

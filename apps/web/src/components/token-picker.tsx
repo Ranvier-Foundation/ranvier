@@ -5,7 +5,13 @@ import { useConnection } from 'wagmi';
 import type { TokenRef } from '@ranvier/types';
 import { chainBg } from '@/lib/chain-style';
 import { t, tPlural } from '@/lib/i18n';
-import { buildRows, quickPicks, splitSections, type PickerRow } from '@/lib/picker/model';
+import {
+  buildRows,
+  collidingSymbols,
+  quickPicks,
+  splitSections,
+  type PickerRow,
+} from '@/lib/picker/model';
 import { MAX_QUERY_LENGTH } from '@/lib/picker/search';
 import { useTokenPicker, type Selection } from '@/lib/picker/use-token-picker';
 import { Chip } from './chip';
@@ -68,6 +74,7 @@ export function TokenPicker({ onSelect, onClose }: TokenPickerProps) {
   );
   const sections = useMemo(() => splitSections(rows), [rows]);
   const flat = useMemo(() => [...sections.held, ...sections.other], [sections]);
+  const colliding = useMemo(() => collidingSymbols(rows), [rows]);
 
   // Rows change under the cursor (search, chain switch, balances arriving): drop the highlight.
   useEffect(() => setActiveIndex(-1), [tokens, selection]);
@@ -269,6 +276,7 @@ export function TokenPicker({ onSelect, onClose }: TokenPickerProps) {
                     row={row}
                     id={optionId(group.offset + i)}
                     active={activeIndex === group.offset + i}
+                    showAddress={colliding.has(row.token.symbol.toUpperCase())}
                     onPick={pick}
                   />
                 ))}
