@@ -2,6 +2,7 @@ import { NATIVE } from '@ranvier/chains';
 import type { ProviderQuote, QuoteRequest, TokenRef } from '@ranvier/types';
 import { z } from 'zod';
 import { usdCents } from '../../domain/usd.js';
+import { isRedirectError, isRedirectStatus } from '../../lib/redirect.js';
 import type { PriceOracle } from '../../ports/price-oracle.js';
 import { ProviderError } from '../../ports/provider-error.js';
 import type { QuoteProvider } from '../../ports/quote-provider.js';
@@ -109,10 +110,22 @@ export class ZeroXProvider implements QuoteProvider {
       txOrigin: req.taker,
       slippageBps: String(req.slippageBps),
     });
-    const res = await this.fetch(`${this.baseUrl}/swap/allowance-holder/quote?${params}`, {
-      headers: { '0x-api-key': this.opts.apiKey, '0x-version': 'v2' },
-      signal,
-    });
+    // Never follow a redirect: across origins Node's fetch strips only `Authorization`, so the
+    // `0x-api-key` header would go to whatever host the redirect names.
+    let res: Response;
+    try {
+      res = await this.fetch(`${this.baseUrl}/swap/allowance-holder/quote?${params}`, {
+        headers: { '0x-api-key': this.opts.apiKey, '0x-version': 'v2' },
+        signal,
+        redirect: 'error',
+      });
+    } catch (err: unknown) {
+      if (isRedirectError(err)) throw new ProviderError('upstream_error', '0x redirect refused');
+      throw err;
+    }
+    if (isRedirectStatus(res.status)) {
+      throw new ProviderError('upstream_error', '0x redirect refused');
+    }
     if (!res.ok) throw new ProviderError('upstream_error', `0x returned ${res.status}`);
 
     const parsed = quoteSchema.safeParse(await res.json().catch(() => undefined));
