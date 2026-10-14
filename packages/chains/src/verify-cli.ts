@@ -3,20 +3,23 @@
  * RPCs and DefiLlama and exits non-zero on any mismatch or failed read. Opt-in and networked:
  * not part of CI. Required for every token-list change (docs/runbooks/token-list.md).
  *
- * RPC URLs come from VERIFY_RPC_EVM_<chainId> (e.g. VERIFY_RPC_EVM_1), defaulting to public
- * publicnode endpoints. They are validated before any request, and every printed line has
+ * RPC URLs come from VERIFY_RPC_EVM_<chainId> (e.g. VERIFY_RPC_EVM_1), defaulting to the first
+ * public endpoint in rpc-defaults.ts. They are validated before any request, and every printed line has
  * URL-looking text replaced, so a keyed URL does not end up in logs; never commit one. Each
  * RPC must report its chain's ID before any token on it is read.
  */
 import type { ChainKey } from '@ranvier/types';
+import { PUBLIC_RPC_URLS } from './rpc-defaults.js';
+import { errText, scrubUrls } from './scrub.js';
 import { TOKEN_LIST } from './tokens.js';
-import { errText, resolveRpcUrl, scrubUrls, verifyTokens, type LlamaCoin } from './verify.js';
+import { resolveRpcUrl, verifyTokens, type LlamaCoin } from './verify.js';
 
-const DEFAULT_RPCS: Readonly<Record<string, string>> = {
-  'evm:1': 'https://ethereum-rpc.publicnode.com',
-  'evm:8453': 'https://base-rpc.publicnode.com',
-  'evm:42161': 'https://arbitrum-one-rpc.publicnode.com',
-};
+/** The first public endpoint of each chain (rpc-defaults.ts). */
+const DEFAULT_RPCS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(PUBLIC_RPC_URLS).flatMap(([chain, urls]) =>
+    urls?.[0] === undefined ? [] : [[chain, urls[0]]],
+  ),
+);
 const TIMEOUT_MS = 15_000;
 const ATTEMPTS = 3;
 

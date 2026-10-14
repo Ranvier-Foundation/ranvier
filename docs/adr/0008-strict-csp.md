@@ -73,7 +73,7 @@ default-src 'none'; script-src 'nonce-{N}' 'strict-dynamic' 'report-sample'; sty
 
 ### Chain reads go through our API
 
-Balances and other RPC reads will be fetched through `apps/api`, never from RPC endpoints in the browser. `connect-src` therefore stays `'self'` plus the API origin. RPC keys stay on the server, and the API can rate-limit and cache. The cost is load and latency on our API. Balances are display data; the wallet still shows and signs the real transaction.
+Balances and other RPC reads will be fetched through `apps/api`, never from RPC endpoints in the browser (built in ADR 0009: `POST /v1/balances`). `connect-src` therefore stays `'self'` plus the API origin. RPC keys stay on the server, and the API can rate-limit and cache. The cost is load and latency on our API. Balances are display data; the wallet still shows and signs the real transaction.
 
 ### Subresource Integrity: deliberate deviation from the spec
 

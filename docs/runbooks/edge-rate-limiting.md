@@ -16,6 +16,7 @@ Rate limiting belongs at the edge (reverse proxy or WAF in front of the self-hos
 
 - [ ] Per-client-IP limit on `/v1/quotes` (starting point: 1 request per second sustained, burst 10) and a lower global ceiling sized to the 0x plan.
 - [ ] Per-client-IP limit on `/v1/fees/preview` (cheap, but keep it bounded).
+- [ ] Per-client-IP limit on `POST /v1/balances` (starting point: 2 requests per second sustained, burst 10) **and** a global ceiling for the route sized to the RPC plan. Both are a release gate (ADR 0009). Each request costs two paid RPC requests, more on failover. The API merges identical requests, reuses a wallet's balances for 3 s and caps reads per chain (8 running, 32 waiting, then `503`), but a client cycling through addresses bypasses the cache: one client can hold every chain's limiter full (legitimate users get `503`) and spend about 55 RPC requests per second per chain, roughly 14 million a day across three chains. Key limits on the client IP only. **Never log request bodies for this route** at Cloudflare, the WAF or Caddy: the body holds the wallet address (personal data). The endpoint is a POST so that URLs, which every layer logs, carry no address.
 - [ ] Return `429` with `Retry-After`; never forward rate-limited requests upstream.
 - [ ] Request body size is already capped at 16 KiB by the API (`413 payload_too_large`); keep the edge cap at or below that.
 - [ ] Alert on sustained 429s and on the 0x quota approaching its limit.

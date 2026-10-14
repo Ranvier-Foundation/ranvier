@@ -140,6 +140,21 @@ const envSchema = z
      * cross-origin access. Never a wildcard; credentials are never allowed.
      */
     WEB_ORIGINS: webOrigins.default([]),
+    /**
+     * Balance reads (ADR 0009). RPC endpoints themselves come from `RPC_URLS_EVM_<chainId>`
+     * (rpc-config.ts). Per JSON-RPC request, per endpoint:
+     */
+    RPC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1_500),
+    /** Endpoint ranking interval (latency and stability samples); 0 turns ranking off. */
+    RPC_RANK_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .refine((v) => v === 0 || (v >= 1_000 && v <= 600_000), 'must be 0 or 1000..600000')
+      .default(30_000),
+    /** Deadline of one POST /v1/balances request, queueing included. */
+    BALANCES_DEADLINE_MS: z.coerce.number().int().min(500).max(10_000).default(3_000),
+    /** How long one wallet's balances are reused (in memory, per process). */
+    BALANCES_CACHE_TTL_MS: z.coerce.number().int().min(0).max(60_000).default(3_000),
     /** Only `production` (trimmed, any case) changes behaviour here. */
     NODE_ENV: z.string().optional(),
   })

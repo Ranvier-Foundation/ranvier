@@ -7,7 +7,7 @@ import {
 import { hashTypedData, hexToBytes, type Hex, type TypedDataDefinition } from 'viem';
 import { z } from 'zod';
 import { SigningUnavailableError, type QuoteSigner } from '../../ports/quote-signer.js';
-import { ConcurrencyLimit, ConcurrencyLimitError } from './concurrency-limit.js';
+import { ConcurrencyLimit, ConcurrencyLimitError } from '../../lib/concurrency-limit.js';
 import {
   addressFromPublicKey,
   parseDerSignature,

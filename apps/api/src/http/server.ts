@@ -1,7 +1,8 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { quoteFee } from '@ranvier/fees';
 import type { Hex } from 'viem';
 import { randomBytes } from 'node:crypto';
+import type { BalanceService } from '../domain/balances.js';
 import { compareProviderQuotes } from '../domain/orchestrator.js';
 import type { RoutePolicy } from '../domain/route-policy.js';
 import { vetRoute } from '../domain/route-safety.js';
@@ -12,6 +13,7 @@ import type { PriceOracle, SwapHistory, TokenPrice } from '../ports/price-oracle
 import type { QuoteProvider } from '../ports/quote-provider.js';
 import { SigningUnavailableError, type QuoteSigner } from '../ports/quote-signer.js';
 import { canSignChain } from '../signing-policy.js';
+import { registerBalanceRoutes } from './balances.js';
 import { registerCors } from './cors.js';
 import { registerListRoutes } from './lists.js';
 import { feePreviewSchema, invalidRequest, quoteRequestSchema } from './schemas.js';
@@ -27,11 +29,14 @@ export interface ServerDeps {
   maxSlippageBps?: number;
   /** Largest output shortfall against the oracle, in bps (default 500). */
   maxOracleDeviationBps?: number;
-  logger?: boolean;
+  /** `true` logs JSON to stdout; tests pass a stream to inspect the lines. */
+  logger?: boolean | { stream: { write(line: string): void }; level?: string };
   /** Exact browser origins allowed to call the API (WEB_ORIGINS). Default: none. */
   webOrigins?: readonly string[];
   /** EVM chain IDs listed by GET /v1/chains (ZEROX_CHAIN_IDS). Default: none. */
   servedChainIds?: readonly number[];
+  /** POST /v1/balances (ADR 0009). Unset: no chain is served (`400 invalid_request`). */
+  balances?: { service: BalanceService; deadlineMs?: number };
   /** When set, quotes include a signed fee-wrapper transaction. */
   signing?: {
     feeWrapper: Hex;
@@ -59,8 +64,47 @@ function errSummary(err: unknown): { name: string; message: string } {
   return { name: typeof err, message: String(err).slice(0, 200) };
 }
 
+/**
+ * The request as logged by Fastify ("incoming request"). Its default serializer logs `req.url`
+ * with the query string, which may hold a wallet address: personal data that must never reach
+ * the logs (ADR 0009). Only the path is logged, for every route.
+ */
+export function requestLogSerializer(req: FastifyRequest): Record<string, unknown> {
+  const q = req.url.indexOf('?');
+  return {
+    method: req.method,
+    url: q === -1 ? req.url : req.url.slice(0, q),
+    hostname: req.hostname,
+    remoteAddress: req.ip,
+  };
+}
+
+function loggerOptions(logger: ServerDeps['logger']) {
+  if (!logger) return false;
+  return {
+    ...(typeof logger === 'object' ? logger : {}),
+    serializers: { req: requestLogSerializer },
+  };
+}
+
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const app = Fastify({ logger: deps.logger ?? false, bodyLimit: 16 * 1024 });
+  const app = Fastify({
+    logger: loggerOptions(deps.logger),
+    bodyLimit: 16 * 1024,
+    // Fastify's own answer to a malformed URL (e.g. `/v1/x%zz`) echoes the URL and skips the
+    // error handler and hooks: replace it with the stable code, uncacheable.
+    frameworkErrors: (err, req, reply) => {
+      req.log.info({ err: { name: err.name, code: err.code } }, 'rejected request');
+      return (
+        (reply as FastifyReply)
+          .code(400)
+          .header('cache-control', 'no-store')
+          // Hooks (CORS among them) do not run for framework errors; Vary is harmless without CORS.
+          .header('vary', 'Origin')
+          .send({ error: 'invalid_request' })
+      );
+    },
+  });
   const quoteSchema = quoteRequestSchema({ maxSlippageBps: deps.maxSlippageBps ?? 1_000 });
   const maxOracleDeviationBps = deps.maxOracleDeviationBps ?? 500;
   // Before any route, so every response (errors and 404s included) carries the CORS decision.
@@ -71,7 +115,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const status =
       typeof err === 'object' && err !== null && 'statusCode' in err ? err.statusCode : 500;
     if (typeof status === 'number' && status >= 400 && status < 500) {
-      req.log.info({ err: errSummary(err) }, 'rejected request');
+      // Name and code only: a client error's message can quote the request (a JSON parse error
+      // quotes the body, which may hold a wallet address).
+      const code = (err as { code?: unknown }).code;
+      req.log.info({ err: { name: errSummary(err).name, code } }, 'rejected request');
       return reply
         .code(status)
         .send({ error: status === 413 ? 'payload_too_large' : 'invalid_request' });
@@ -89,6 +136,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerListRoutes(app, {
     servedChainIds: deps.servedChainIds ?? [],
     quoting: (chainId) => routingConfigured && (deps.routePolicy?.has(chainId) ?? false),
+    balances: (chainId) => deps.balances?.service.available(chainId) ?? false,
+  });
+  const balanceService = deps.balances?.service;
+  if (balanceService) app.addHook('onClose', async () => balanceService.close());
+  registerBalanceRoutes(app, {
+    service: deps.balances?.service,
+    deadlineMs: deps.balances?.deadlineMs,
   });
 
   app.post('/v1/fees/preview', async (req, reply) => {

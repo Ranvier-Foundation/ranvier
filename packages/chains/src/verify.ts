@@ -1,6 +1,10 @@
 import type { ChainKey } from '@ranvier/types';
 import { getChain } from './registry.js';
+import { errText } from './scrub.js';
 import type { CuratedToken } from './tokens.js';
+
+// Moved to scrub.ts (shared with the API); re-exported for existing importers.
+export { errText, scrubUrls } from './scrub.js';
 
 /**
  * Re-verification of the curated token list against the chains and DefiLlama (runbook:
@@ -139,25 +143,6 @@ export function diffToken(t: CuratedToken, o: Observed): string[] {
   }
   return problems;
 }
-
-/** `scheme://...`, or a bare `host.tld/...` with a path. */
-const URL_LIKE = [
-  /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]*/gi,
-  /\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/[^\s"'<>()]*/gi,
-];
-
-/**
- * Replaces every URL-looking substring with `<rpc-url>`. RPC URLs often carry an API key, and
- * runtime errors (e.g. `Failed to parse URL from <url>`) can quote them; nothing printed by
- * `verify:tokens` may contain one.
- */
-export function scrubUrls(text: string): string {
-  return URL_LIKE.reduce((t, re) => t.replace(re, '<rpc-url>'), text);
-}
-
-/** An error as one short line with any URL removed. */
-export const errText = (err: unknown): string =>
-  scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 200);
 
 /** The environment variable that overrides the RPC URL of an EVM chain. */
 export const rpcEnvName = (chain: ChainKey): string =>

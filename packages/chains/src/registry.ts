@@ -30,7 +30,8 @@ export interface ChainConfig {
 
 /**
  * Chains are added here as config, not code (spec section 5).
- * RPC URLs are environment config and live outside this package.
+ * RPC URLs are environment config (`RPC_URLS_EVM_<chainId>` in the API) and live outside this
+ * registry; `rpc-defaults.ts` holds only public development endpoints.
  * Stablecoin addresses are lowercased for EVM so lookups are case-insensitive.
  *
  * Deep-frozen at runtime, like `TOKEN_LIST` and `FEE_SCHEDULE`: `stablecoins` sets the 0.05%

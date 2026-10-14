@@ -19,6 +19,11 @@ export interface ChainView {
   explorer: string;
   /** True when this API can quote swaps on the chain right now. */
   quoting: boolean;
+  /**
+   * True when POST /v1/balances can read the chain right now: it has a curated token list and at
+   * least one RPC endpoint that proved it serves this chain (ADR 0009).
+   */
+  balances: boolean;
 }
 
 export interface TokenView {
@@ -36,6 +41,8 @@ export interface ListOptions {
   servedChainIds: readonly number[];
   /** Whether quoting is enabled on a served chain. */
   quoting: (chainId: number) => boolean;
+  /** Whether balances can be read on a served chain right now (default: never). */
+  balances?: (chainId: number) => boolean;
 }
 
 /**
@@ -56,6 +63,7 @@ export function servedChains(opts: ListOptions): ChainView[] {
         nativeDecimals: c.nativeDecimals,
         explorer: c.explorer,
         quoting: opts.quoting(id),
+        balances: opts.balances?.(id) ?? false,
       },
     ];
   });
@@ -78,11 +86,9 @@ function tokenView(t: TokenInfo): TokenView {
  * provider, oracle or signer is called, and no request value is echoed back.
  */
 export function registerListRoutes(app: FastifyInstance, opts: ListOptions): void {
-  // Computed once: the served set and quoting flags are fixed at startup.
-  const chains = servedChains(opts);
-
+  // Computed per request: `balances` follows RPC endpoint health.
   app.get('/v1/chains', async (_req, reply) => {
-    return reply.header('cache-control', LIST_CACHE_CONTROL).send(chains);
+    return reply.header('cache-control', LIST_CACHE_CONTROL).send(servedChains(opts));
   });
 
   app.get('/v1/tokens', async (req, reply) => {
