@@ -51,6 +51,8 @@ async function openConnected(page: Page, width = 1440, height = 900) {
 }
 
 async function scan(page: Page) {
+  // Colours fade for 150 ms: axe must not read a colour half way between two states.
+  await page.waitForFunction(() => document.getAnimations().length === 0);
   return new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'])
     .analyze();
@@ -381,6 +383,8 @@ test.describe('chain switching, search and stale answers', () => {
     await page.reload();
     await hydrated(page);
     await expect(dialog(page)).toBeVisible();
+    // Requests the reload itself cut short belong to the session before it.
+    abortedRequests.length = 0;
     await chip(page, 'Base').click();
     await expect(options(page)).toHaveCount(TOKENS['evm:8453'].length);
     await expect
