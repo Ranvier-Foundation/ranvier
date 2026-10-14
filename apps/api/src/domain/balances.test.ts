@@ -289,3 +289,34 @@ describe('BalanceService', () => {
     expect((await rejection(p)).code).toBe('timeout');
   });
 });
+
+describe('BalanceService cache sweep', () => {
+  it('deletes expired entries on a timer, without a new request for them', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      const reader = new ManualReader();
+      const svc = new BalanceService({
+        reader,
+        servedChainIds: [1],
+        cacheTtlMs: 3_000,
+        failureTtlMs: 1_000,
+        sweepIntervalMs: 500,
+      });
+      const ok = svc.balances('evm:1', OWNER, never());
+      const bad = svc.balances('evm:1', OTHER, never());
+      await vi.advanceTimersByTimeAsync(0);
+      await reader.answer(0);
+      (await reader.read(1)).reject(new ChainReadError('rpc_unavailable', 'rpc_error'));
+      await ok;
+      await rejection(bad);
+      expect(svc.cacheSize).toBe(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(svc.cacheSize).toBe(1); // the failure is gone
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(svc.cacheSize).toBe(0); // and the balances, within TTL + one interval
+      svc.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

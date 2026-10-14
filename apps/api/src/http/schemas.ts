@@ -110,14 +110,13 @@ const NOT_A_WALLET: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * GET /v1/balances query (ADR 0009). `chain` must be a served EVM chain with a curated token
+ * POST /v1/balances JSON body (ADR 0009). `chain` must be a served EVM chain with a curated token
  * list. `address` is a 20-byte hex account in any letter case (no EIP-55 checksum check: the
  * data is public and read-only, and the web app sends the connected wallet's own address); it
  * is lowercased here and never echoed in its raw form. The zero address and `0xeeee...eeee` are
- * refused: they are native-coin placeholders, not wallets. Unknown or repeated parameters are
- * refused.
+ * refused: they are native-coin placeholders, not wallets. Unknown keys are refused.
  */
-export function balancesQuerySchema(serves: (chain: ChainKey) => boolean) {
+export function balancesRequestSchema(serves: (chain: ChainKey) => boolean) {
   return z.strictObject({
     chain: chainKey.refine((k) => k.startsWith('evm:') && serves(k), 'not a served EVM chain'),
     address: z

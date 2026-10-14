@@ -10,7 +10,8 @@ import { ChainReadError, type ChainReader, type EvmAddress } from '../ports/chai
  * Display data only. Nothing here feeds fees, route vetting or signing.
  *
  * Load control, so one wallet (or a flood of wallets) cannot open unbounded RPC calls:
- * - a micro-cache per (chain, owner), bounded with least-recently-used eviction;
+ * - a micro-cache per (chain, owner), bounded with least-recently-used eviction, and swept every
+ *   `sweepIntervalMs`, so no address stays in memory much longer than its TTL;
  * - failures are remembered for a short negative TTL only;
  * - identical concurrent requests share one read;
  * - at most `maxInFlightPerChain` reads per chain, `maxQueuePerChain` waiting, beyond that the
@@ -50,6 +51,8 @@ export interface BalanceServiceOptions {
   maxInFlightPerChain?: number;
   /** Reads waiting for a slot per chain (default 32). */
   maxQueuePerChain?: number;
+  /** Expired cache entries are deleted this often (default 1000 ms; the timer is unref'd). */
+  sweepIntervalMs?: number;
   now?: () => number;
 }
 
@@ -96,6 +99,7 @@ export class BalanceService {
   private readonly maxCacheEntries: number;
   private readonly deadlineMs: number;
   private readonly now: () => number;
+  private readonly sweeper: ReturnType<typeof setInterval>;
 
   constructor(opts: BalanceServiceOptions) {
     this.reader = opts.reader;
@@ -104,6 +108,8 @@ export class BalanceService {
     this.maxCacheEntries = Math.max(1, opts.maxCacheEntries ?? 5_000);
     this.deadlineMs = opts.deadlineMs ?? 3_000;
     this.now = opts.now ?? Date.now;
+    this.sweeper = setInterval(() => this.sweep(), opts.sweepIntervalMs ?? 1_000);
+    this.sweeper.unref();
     for (const id of balanceChainIds(opts.servedChainIds)) {
       this.plans.set(`evm:${id}`, plan(id));
       this.limits.set(
@@ -114,6 +120,25 @@ export class BalanceService {
           maxWaitMs: this.deadlineMs,
         }),
       );
+    }
+  }
+
+  /** Cached (chain, owner) entries right now, expired ones included until the next sweep. */
+  get cacheSize(): number {
+    return this.cache.size;
+  }
+
+  /** Stops the sweep timer (server shutdown). */
+  close(): void {
+    clearInterval(this.sweeper);
+  }
+
+  /** Deletes every expired entry: an address is kept for at most its TTL plus one interval. */
+  private sweep(): void {
+    const now = this.now();
+    for (const [key, entry] of this.cache) {
+      const ttl = 'value' in entry ? this.cacheTtlMs : this.failureTtlMs;
+      if (now - entry.at >= ttl) this.cache.delete(key);
     }
   }
 

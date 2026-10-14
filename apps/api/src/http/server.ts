@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { quoteFee } from '@ranvier/fees';
 import type { Hex } from 'viem';
 import { randomBytes } from 'node:crypto';
@@ -88,7 +88,21 @@ function loggerOptions(logger: ServerDeps['logger']) {
 }
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const app = Fastify({ logger: loggerOptions(deps.logger), bodyLimit: 16 * 1024 });
+  const app = Fastify({
+    logger: loggerOptions(deps.logger),
+    bodyLimit: 16 * 1024,
+    // Fastify's own answer to a malformed URL (e.g. `/v1/x%zz`) echoes the URL and skips the
+    // error handler and hooks: replace it with the stable code, uncacheable.
+    frameworkErrors: (err, req, reply) => {
+      req.log.info({ err: { name: err.name, code: err.code } }, 'rejected request');
+      return (reply as FastifyReply)
+        .code(400)
+        .header('cache-control', 'no-store')
+        // Hooks (CORS among them) do not run for framework errors; Vary is harmless without CORS.
+        .header('vary', 'Origin')
+        .send({ error: 'invalid_request' });
+    },
+  });
   const quoteSchema = quoteRequestSchema({ maxSlippageBps: deps.maxSlippageBps ?? 1_000 });
   const maxOracleDeviationBps = deps.maxOracleDeviationBps ?? 500;
   // Before any route, so every response (errors and 404s included) carries the CORS decision.
@@ -99,7 +113,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const status =
       typeof err === 'object' && err !== null && 'statusCode' in err ? err.statusCode : 500;
     if (typeof status === 'number' && status >= 400 && status < 500) {
-      req.log.info({ err: errSummary(err) }, 'rejected request');
+      // Name and code only: a client error's message can quote the request (a JSON parse error
+      // quotes the body, which may hold a wallet address).
+      const code = typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined;
+      req.log.info({ err: { name: errSummary(err).name, code } }, 'rejected request');
       return reply
         .code(status)
         .send({ error: status === 413 ? 'payload_too_large' : 'invalid_request' });
@@ -119,6 +136,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     quoting: (chainId) => routingConfigured && (deps.routePolicy?.has(chainId) ?? false),
     balances: (chainId) => deps.balances?.service.available(chainId) ?? false,
   });
+  const balanceService = deps.balances?.service;
+  if (balanceService) app.addHook('onClose', async () => balanceService.close());
   registerBalanceRoutes(app, {
     service: deps.balances?.service,
     deadlineMs: deps.balances?.deadlineMs,
