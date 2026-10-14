@@ -20,7 +20,7 @@ export function t(id: MessageId, params?: MessageParams): string {
 }
 
 /** Picks `<base>.one` or `<base>.other` by the locale's plural rule, with `{count}` filled in. */
-export function tPlural(base: 'header.activity', count: number): string {
+export function tPlural(base: 'header.activity' | 'picker.count', count: number): string {
   const form = new Intl.PluralRules('en').select(count) === 'one' ? 'one' : 'other';
   return t(`${base}.${form}`, { count });
 }

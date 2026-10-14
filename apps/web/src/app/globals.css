@@ -70,9 +70,54 @@
   grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
 }
 
+/*
+ * A control whose drawn height is under 44 px keeps its drawn size and gets a centred 44 px hit
+ * area (docs/ui-guidelines.md section 7): an invisible pseudo-element that belongs to the control.
+ */
+@utility hit-area {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    height: var(--spacing-control);
+    min-height: 100%;
+    transform: translateY(-50%);
+  }
+}
+
 /* An open modal dialog freezes the page behind it. */
 html:has(dialog[open]) {
   overflow: hidden;
+}
+
+@layer components {
+  /*
+   * Search field: the canvas draws a 1.5 px inset primary ring on the whole pill while its input
+   * has no outline of its own. The ring sits on the pill so focus stays visible (accessibility).
+   */
+  .search-field:focus-within {
+    outline: var(--ring-width) solid var(--color-primary);
+    outline-offset: calc(var(--ring-width) * -1);
+  }
+  .search-field input:focus-visible {
+    outline: none;
+  }
+  /* The "All networks" chip dot: one quarter per network colour (canvas conic gradient). */
+  .chain-all-dot {
+    background: conic-gradient(
+      var(--color-chain-ethereum) 0 25%,
+      var(--color-chain-base) 0 50%,
+      var(--color-chain-arbitrum) 0 75%,
+      var(--color-chain-solana) 0
+    );
+  }
+  /* The option the keyboard is on in a combobox listbox: a visible ring, not a tint alone. */
+  [role='option'][data-active='true'] {
+    outline: var(--focus-width) solid var(--color-primary);
+    outline-offset: calc(var(--focus-width) * -1);
+  }
 }
 
 /*
