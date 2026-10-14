@@ -189,10 +189,17 @@ test.describe('no violations', () => {
         await page.goto(route);
         await hydrated(page);
         await page.evaluate(() => document.fonts.ready);
-        // Hydrated: the header's client components respond.
-        const more = header(page).getByRole('button', { name: 'More' });
-        await more.click();
-        await expect(more).toHaveAttribute('aria-expanded', 'true');
+        const modal = page.getByRole('dialog');
+        if (await modal.isVisible()) {
+          // A route that opens a modal (Select token): the page behind it is inert, so check the
+          // modal itself, with its data loaded from the API origin the policy allows.
+          await expect(modal.getByRole('option').first()).toBeVisible();
+        } else {
+          // Hydrated: the header's client components respond.
+          const more = header(page).getByRole('button', { name: 'More' });
+          await more.click();
+          await expect(more).toHaveAttribute('aria-expanded', 'true');
+        }
         expect(csp.violations).toEqual([]);
         expect(csp.console).toEqual([]);
       });

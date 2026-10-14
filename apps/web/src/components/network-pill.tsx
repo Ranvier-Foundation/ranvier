@@ -1,16 +1,17 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { getChain, type ChainConfig } from '@ranvier/chains';
 import type { ChainKey } from '@ranvier/types';
+import { chainBg } from '@/lib/chain-style';
 import { defaultNetwork } from '@/lib/defaults';
 import { t } from '@/lib/i18n';
 import { Chevron } from './icons';
 
 /** Coin colour and letter colour per network (letter colours chosen for 4.5:1 contrast). */
-const COIN: Record<string, string> = {
-  'evm:1': 'bg-chain-ethereum text-ink',
-  'evm:8453': 'bg-chain-base text-on-primary',
-  'evm:42161': 'bg-chain-arbitrum text-ink',
-  'solana:mainnet': 'bg-chain-solana text-on-primary',
+const COIN_LETTER: Record<string, string> = {
+  'evm:1': 'text-ink',
+  'evm:8453': 'text-on-primary',
+  'evm:42161': 'text-ink',
+  'solana:mainnet': 'text-on-primary',
 };
 const DOTS = ['fill-chain-ethereum', 'fill-chain-base', 'fill-chain-arbitrum', 'fill-chain-solana'];
 
@@ -19,7 +20,7 @@ export function NetworkCoin({ chain }: { chain: ChainConfig }) {
   return (
     <span
       aria-hidden="true"
-      className={`flex size-avatar items-center justify-center rounded-round text-caption font-bold ${COIN[chain.key] ?? 'bg-primary text-on-primary'}`}
+      className={`flex size-avatar items-center justify-center rounded-round text-caption font-bold ${chainBg(chain.key)} ${COIN_LETTER[chain.key] ?? 'text-on-primary'}`}
     >
       {chain.name.slice(0, 1)}
     </span>
