@@ -49,6 +49,8 @@ export interface FakeNode {
   native: bigint;
   tokens: Map<string, TokenAnswer>;
   mode: FakeMode;
+  /** Methods answered with HTTP 500 (while the others answer normally). */
+  failMethods?: ReadonlySet<string>;
   /** Raw `result` per method, replacing the computed one (junk injection). */
   results?: Record<string, unknown>;
   /** Replaces the whole aggregate3 return data. */
@@ -147,6 +149,9 @@ export class FakeRpc {
         { jsonrpc: '2.0', id: body.id, error: { code: 429, message: `limit for ${url}` } },
         { status: 429 },
       );
+    }
+    if (n.failMethods?.has(body.method)) {
+      return new Response('upstream failure', { status: 500 });
     }
     const reply = (payload: Record<string, unknown>): Response =>
       Response.json({ jsonrpc: '2.0', id: body.id, ...payload });
