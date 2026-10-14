@@ -117,7 +117,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (typeof status === 'number' && status >= 400 && status < 500) {
       // Name and code only: a client error's message can quote the request (a JSON parse error
       // quotes the body, which may hold a wallet address).
-      const code = typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined;
+      const code = (err as { code?: unknown }).code;
       req.log.info({ err: { name: errSummary(err).name, code } }, 'rejected request');
       return reply
         .code(status)

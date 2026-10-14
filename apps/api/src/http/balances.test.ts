@@ -400,6 +400,12 @@ describe('wallet addresses never reach the logs', () => {
     expect(text).toContain('rejected request');
   });
 
+  it('installs the serializer for the production logger too (logger: true)', async () => {
+    const app = buildServer({ providers: [], logger: true });
+    expect(app.log.level).toBe('info');
+    await app.close();
+  });
+
   it('serializes requests without the query string', () => {
     const req = { method: 'GET', url: `/v1/balances?address=${OWNER}`, hostname: 'h', ip: '::1' };
     expect(requestLogSerializer(req as never)).toEqual({

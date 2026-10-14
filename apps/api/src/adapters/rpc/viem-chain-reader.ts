@@ -363,16 +363,18 @@ export class ViemChainReader implements ChainReader {
     if (blockNumber === 0n || blockNumber > MAX_BLOCK_NUMBER) {
       throw new ChainReadError('rpc_unavailable', 'implausible_block_number');
     }
-    const result = chain.multicall
-      ? await this.readMulticall(chain, request, blockNumber, signal)
-      : await this.readIndividually(chain, request, blockNumber, signal);
+    const reading = chain.multicall
+      ? this.readMulticall(chain, request, blockNumber, signal)
+      : this.readIndividually(chain, request, blockNumber, signal);
+    const result = await reading;
     if (result.chainId !== BigInt(chain.chainId)) {
       // The endpoint that answered the chain ID (the eth_call itself with Multicall3) serves
       // another chain: drop it for a while. The others keep serving.
       const method = chain.multicall ? 'eth_call' : 'eth_chainId';
-      for (const { ep } of ctx.served.filter((s) => s.method === method).slice(-1)) {
-        this.penalize(chain, ep);
-      }
+      ctx.served
+        .filter((s) => s.method === method)
+        .slice(-1)
+        .forEach(({ ep }) => this.penalize(chain, ep));
       throw new ChainReadError('rpc_unavailable', 'chain_id_mismatch');
     }
     this.checkBlock(chain, blockNumber, result.timestamp);

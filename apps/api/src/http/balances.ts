@@ -71,10 +71,9 @@ export function registerBalanceRoutes(app: FastifyInstance, opts: BalanceRouteOp
         return reply.code(503).send({ error: 'rpc_unavailable' });
       }
       // A client that hangs up abandons the read (and frees its share of the limiter).
+      // The listener is removed before the answer is written, so a 'close' here is a hang-up.
       const disconnected = new AbortController();
-      const onClose = (): void => {
-        if (!reply.raw.writableEnded) disconnected.abort();
-      };
+      const onClose = (): void => disconnected.abort();
       reply.raw.on('close', onClose);
       try {
         const signal = AbortSignal.any([AbortSignal.timeout(deadlineMs), disconnected.signal]);
