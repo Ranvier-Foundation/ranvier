@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test as base, expect, type Page } from '@playwright/test';
 import { NOT_FOUND_ROUTE, UNBUILT_ROUTES } from './routes';
 
@@ -59,7 +61,8 @@ interface Fixtures {
   /**
    * On (default) for every test: fails the test on any CSP violation or CSP console message, any
    * request that leaves the origin, any console or page error, and any 4xx/5xx response (except
-   * unbuilt nav routes, which Next prefetches, and the 404 test route). Only a test that provokes
+   * unbuilt nav routes, which Next prefetches, and the 404 test route). A retry never passes a test
+   * whose earlier attempt saw a CSP violation. Only a test that provokes
    * these on purpose (the CSP negative test) turns it off with `test.use({ pageChecks: false })`.
    */
   pageChecks: boolean;
@@ -74,8 +77,15 @@ export const test = base.extend<Fixtures>({
     await use(await recordCsp(page));
   },
   pageProblems: [
-    async ({ page, baseURL, pageChecks, csp }, use) => {
+    async ({ page, baseURL, pageChecks, csp }, use, testInfo) => {
       const list: string[] = [];
+      // CI retries a failed test once. A CSP violation must not be rescued by that retry: the
+      // first attempt leaves a marker (test-results is emptied at the start of every run) and
+      // every later attempt of the same test fails with it.
+      const marker = join(testInfo.project.outputDir, '.csp-violations', `${testInfo.testId}.txt`);
+      if (pageChecks && testInfo.retry > 0 && existsSync(marker)) {
+        list.push(`CSP violation on an earlier attempt: ${readFileSync(marker, 'utf8')}`);
+      }
       const origin = new URL(baseURL ?? 'http://127.0.0.1:3100').origin;
       page.on('request', (r) => {
         const url = new URL(r.url());
@@ -100,10 +110,17 @@ export const test = base.extend<Fixtures>({
       await use(undefined);
       if (!pageChecks) return;
       await settle(page);
-      for (const v of csp.violations) {
-        list.push(`CSP ${v.disposition} ${v.directive}: ${v.blocked} ${v.sample}`);
+      const cspProblems = [
+        ...csp.violations.map(
+          (v) => `CSP ${v.disposition} ${v.directive}: ${v.blocked} ${v.sample}`,
+        ),
+        ...csp.console.map((c) => `CSP console: ${c}`),
+      ];
+      if (cspProblems.length > 0) {
+        mkdirSync(join(testInfo.project.outputDir, '.csp-violations'), { recursive: true });
+        writeFileSync(marker, cspProblems.join('\n'));
       }
-      for (const c of csp.console) list.push(`CSP console: ${c}`);
+      list.push(...cspProblems);
       expect(list).toEqual([]);
     },
     { auto: true },

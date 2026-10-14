@@ -1,3 +1,4 @@
+import { request as httpRequest } from 'node:http';
 import type { APIResponse, Page } from '@playwright/test';
 import {
   apiOrigin,
@@ -5,7 +6,7 @@ import {
   staticSecurityHeaders,
 } from '../../src/lib/security/csp';
 import { expect, test, type CspViolation } from './fixtures';
-import { NOT_FOUND_ROUTE, ROUTES } from './routes';
+import { NOT_FOUND_ROUTE, PROBE_PATHS, ROUTES, STATIC_MISS_PATHS } from './routes';
 import { DEFAULT_WALLET, installWallets } from './wallet-fixture';
 
 /**
@@ -15,6 +16,31 @@ import { DEFAULT_WALLET, installWallets } from './wallet-fixture';
  */
 
 const PAGES = [...ROUTES, NOT_FOUND_ROUTE];
+
+// A CSP failure must never be rescued by a retry (CI retries other tests once): it is either a
+// real hole or a real break. The shared fixture also fails any retry after a CSP violation.
+test.describe.configure({ retries: 0 });
+
+interface Raw {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+}
+
+/** One request with the path sent exactly as written (fetch would normalise `%2e%2e`). */
+function raw(baseURL: string | undefined, method: string, path: string): Promise<Raw> {
+  const { hostname, port } = new URL(baseURL ?? 'http://127.0.0.1:3100');
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ hostname, port, method, path }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => (body += c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 const header = (page: Page) => page.getByRole('banner');
 
 function nonceOf(policy: string): string {
@@ -78,6 +104,53 @@ test.describe('header', () => {
     expect(res.headers()['content-security-policy']).toBeUndefined();
     expect(res.headers()['cross-origin-resource-policy']).toBe('same-origin');
   });
+});
+
+test.describe('matcher coverage', () => {
+  for (const path of PROBE_PATHS) {
+    test(`${path}: answered by the app under the policy`, async ({ baseURL }) => {
+      const res = await raw(baseURL, 'GET', path);
+      expect([200, 404]).toContain(res.status);
+      expect(String(res.headers['content-type'])).toContain('text/html');
+      const policy = String(res.headers['content-security-policy'] ?? '');
+      const nonce = nonceOf(policy);
+      expect(res.headers['content-security-policy-report-only']).toBeUndefined();
+      expect(String(res.headers['cache-control'])).toMatch(/private.*no-store|no-store.*private/);
+      const scripts = res.body.match(/<script\b[^>]*>/g) ?? [];
+      expect(scripts.length).toBeGreaterThan(0);
+      for (const tag of scripts) expect(tag).toContain(` nonce="${nonce}"`);
+      expect(res.body).not.toMatch(/<style\b/);
+    });
+  }
+
+  test('/_global-error by URL is the app 404, not the cacheable prerendered error page', async ({
+    baseURL,
+  }) => {
+    const res = await raw(baseURL, 'GET', '/_global-error');
+    expect(res.status).toBe(404);
+    expect(String(res.headers['cache-control'])).not.toContain('s-maxage');
+  });
+
+  for (const method of ['HEAD', 'POST']) {
+    test(`${method} /: policy and no-store`, async ({ baseURL }) => {
+      const res = await raw(baseURL, method, '/');
+      expect(res.status).toBe(200);
+      nonceOf(String(res.headers['content-security-policy'] ?? ''));
+      expect(String(res.headers['cache-control'])).toContain('no-store');
+    });
+  }
+
+  for (const path of STATIC_MISS_PATHS) {
+    test(`${path}: build-asset miss is a plain-text 404 (no HTML, so no policy needed)`, async ({
+      baseURL,
+    }) => {
+      const res = await raw(baseURL, 'GET', path);
+      expect(res.status).toBe(404);
+      expect(String(res.headers['content-type'])).toContain('text/plain');
+      expect(res.body).not.toMatch(/<html|<script/i);
+      expect(res.headers['content-security-policy']).toBeUndefined();
+    });
+  }
 });
 
 test.describe('no violations', () => {

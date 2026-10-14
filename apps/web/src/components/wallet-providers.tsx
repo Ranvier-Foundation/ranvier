@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 import { createWalletConfig } from '@/lib/wallet/config';
@@ -10,6 +10,11 @@ import { ConnectDialogProvider } from './connect-dialog';
 export function WalletProviders({ children }: { children: ReactNode }) {
   const [config] = useState(createWalletConfig);
   const [queryClient] = useState(() => new QueryClient());
+  // Hydration signal: this effect runs after every child's, so once the attribute is set every
+  // control on the page has its handlers. Tests wait for it instead of racing hydration.
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = 'true';
+  }, []);
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>

@@ -16,11 +16,14 @@
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
- * The API origin the browser may call, from NEXT_PUBLIC_API_URL. Read at BUILD time: Next bakes
- * NEXT_PUBLIC_* values into the build (next.config.ts calls this so a bad value fails the build),
- * so changing it needs a rebuild. Only the origin is used, never a path; anything but an http(s)
- * URL throws, so a typo cannot widen `connect-src`. A production build refuses plain http unless
- * the host is loopback. Unset or empty: same-origin only.
+ * The API origin the browser may call, from NEXT_PUBLIC_API_URL, decided at BUILD time only.
+ * next.config.ts validates it here (a bad value fails the build) and bakes the result into the
+ * build as `RANVIER_BUILD_API_ORIGIN` (Next's `env` option replaces it with a literal, empty when
+ * unset), which is all the proxy reads. Environment variables at runtime cannot change
+ * `connect-src`; the client bundle bakes NEXT_PUBLIC_API_URL at build too, so both always agree.
+ * Only the origin is used, never a path; anything but an http(s) URL throws, so a typo cannot
+ * widen `connect-src`. A production build refuses plain http unless the host is loopback. Unset
+ * or empty: same-origin only.
  */
 export function apiOrigin(apiUrl: string | undefined, nodeEnv?: string): string | undefined {
   const raw = apiUrl?.trim();
@@ -116,12 +119,42 @@ export function contentSecurityPolicy({ nonce, api, dev }: CspInput): string {
 
 export type CspHeaderName = 'Content-Security-Policy' | 'Content-Security-Policy-Report-Only';
 
+/** The only `RANVIER_ENV` value under which `CSP_REPORT_ONLY=1` takes effect. */
+export const STAGING_ENV = 'staging';
+
+export interface CspDelivery {
+  header: CspHeaderName;
+  /** Set when the server must say loudly, once at startup, how the policy is (not) enforced. */
+  warning?: string;
+}
+
 /**
- * `CSP_REPORT_ONLY=1` (exactly) sends the same policy as Report-Only, for a first staging run
- * behind the real proxy and CDN (docs/runbooks/web-deployment-headers.md). Anything else enforces.
+ * Which header carries the policy. Report-Only needs BOTH `CSP_REPORT_ONLY=1` and
+ * `RANVIER_ENV=staging`, exact values, read at runtime: it is for a first staging run behind the
+ * real proxy and CDN (docs/runbooks/web-deployment-headers.md). `CSP_REPORT_ONLY=1` anywhere else
+ * is ignored (the policy is enforced) with a warning, so a leftover flag cannot switch production
+ * to report-only. Both cases log a warning at server start (src/instrumentation.ts).
  */
-export function cspHeaderName(reportOnlyFlag: string | undefined): CspHeaderName {
-  return reportOnlyFlag === '1' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy';
+export function cspDelivery(env: {
+  CSP_REPORT_ONLY?: string | undefined;
+  RANVIER_ENV?: string | undefined;
+}): CspDelivery {
+  if (env.CSP_REPORT_ONLY !== '1') return { header: 'Content-Security-Policy' };
+  if (env.RANVIER_ENV === STAGING_ENV) {
+    return {
+      header: 'Content-Security-Policy-Report-Only',
+      warning:
+        'CSP IS NOT ENFORCED: CSP_REPORT_ONLY=1 and RANVIER_ENV=staging, so the policy is sent as ' +
+        'Content-Security-Policy-Report-Only. Staging only; never release like this.',
+    };
+  }
+  const shown = JSON.stringify((env.RANVIER_ENV ?? '(unset)').slice(0, 32));
+  return {
+    header: 'Content-Security-Policy',
+    warning:
+      `CSP_REPORT_ONLY=1 IGNORED: RANVIER_ENV is ${shown}, not "${STAGING_ENV}", so the policy is ` +
+      'ENFORCED. Remove CSP_REPORT_ONLY from this environment.',
+  };
 }
 
 /**

@@ -1,14 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { createRequire } from 'node:module';
+import { getMiddlewareRouteMatcher } from 'next/dist/shared/lib/router/utils/middleware-route-matcher.js';
 import {
   apiOrigin,
   contentSecurityPolicy,
   createNonce,
-  cspHeaderName,
+  cspDelivery,
   NONCE_BYTES,
   staticSecurityHeaders,
 } from '../../src/lib/security/csp.ts';
-import { proxy } from '../../src/proxy.ts';
+import { config as proxyConfig } from '../../src/proxy.ts';
+
+/** Next's own matcher compiler (internal, not in its type declarations): exact build semantics. */
+const { getMiddlewareMatchers } = createRequire(import.meta.url)(
+  'next/dist/build/analysis/get-page-static-info.js',
+) as {
+  getMiddlewareMatchers: (
+    matcher: unknown,
+    nextConfig: { basePath: string; i18n: null },
+  ) => { regexp: string; originalSource: string }[];
+};
+
+/** The proxy reads its settings once at module load: import a fresh copy per environment. */
+async function loadProxy(env: Record<string, string> = {}) {
+  vi.resetModules();
+  for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+  return (await import('../../src/proxy.ts')).proxy;
+}
 
 /** A fixed, valid nonce (16 bytes of base64) for exact comparisons. */
 const NONCE = 'AAECAwQFBgcICQoLDA0ODw==';
@@ -98,10 +117,28 @@ describe('content security policy', () => {
     expect(policy('https://api.ranvier.example')).not.toMatch(/report-uri|report-to/);
   });
 
-  it('sends Report-Only only for CSP_REPORT_ONLY=1 exactly', () => {
-    expect(cspHeaderName('1')).toBe('Content-Security-Policy-Report-Only');
-    for (const v of [undefined, '', '0', 'true', 'yes', ' 1'])
-      expect(cspHeaderName(v)).toBe('Content-Security-Policy');
+  it('Report-Only needs CSP_REPORT_ONLY=1 AND RANVIER_ENV=staging, exact values', () => {
+    expect(cspDelivery({ CSP_REPORT_ONLY: '1', RANVIER_ENV: 'staging' })).toEqual({
+      header: 'Content-Security-Policy-Report-Only',
+      warning: expect.stringMatching(/^CSP IS NOT ENFORCED/) as unknown as string,
+    });
+    for (const v of [undefined, '', '0', 'true', 'yes', ' 1', '1 '])
+      for (const e of [undefined, 'staging', 'production']) {
+        expect(cspDelivery({ CSP_REPORT_ONLY: v, RANVIER_ENV: e })).toEqual({
+          header: 'Content-Security-Policy',
+        });
+      }
+  });
+
+  it('CSP_REPORT_ONLY=1 without RANVIER_ENV=staging is ignored (enforced) and warns', () => {
+    for (const e of [undefined, '', 'production', 'Staging', ' staging', 'staging ', 'prod']) {
+      const d = cspDelivery({ CSP_REPORT_ONLY: '1', RANVIER_ENV: e });
+      expect(d.header).toBe('Content-Security-Policy');
+      expect(d.warning).toMatch(/^CSP_REPORT_ONLY=1 IGNORED: .* ENFORCED/);
+    }
+    // The echoed value is bounded and quoted.
+    const long = cspDelivery({ CSP_REPORT_ONLY: '1', RANVIER_ENV: 'x'.repeat(500) });
+    expect(long.warning?.length).toBeLessThan(200);
   });
 });
 
@@ -125,40 +162,46 @@ describe('nonce', () => {
 });
 
 describe('proxy', () => {
-  const run = (headers: Record<string, string> = {}) =>
-    proxy(new NextRequest('http://127.0.0.1:3100/', { headers }));
+  const request = (path = '/', headers: Record<string, string> = {}) =>
+    new NextRequest(`http://127.0.0.1:3100${path}`, { headers });
   /** NextResponse.next({ request }) forwards request headers as x-middleware-request-*. */
   const forwarded = (res: Response, name: string) =>
     res.headers.get(`x-middleware-request-${name}`);
 
-  it('sends the policy on the response and forwards the same one to the renderer', () => {
-    const res = run();
+  it('sends the policy on the response and forwards the same one to the renderer', async () => {
+    const res = (await loadProxy())(request());
     const sent = res.headers.get('content-security-policy');
     expect(sent).toMatch(/^default-src 'none'; script-src 'nonce-[A-Za-z0-9+/]{22}==' /);
     expect(forwarded(res, 'content-security-policy')).toBe(sent);
     expect(res.headers.get('content-security-policy-report-only')).toBeNull();
+    expect(res.headers.get('x-middleware-rewrite')).toBeNull();
   });
 
-  it('uses a new nonce per request', () => {
+  it('uses a new nonce per request', async () => {
+    const proxy = await loadProxy();
     const nonce = (r: Response) =>
       /'nonce-([^']+)'/.exec(r.headers.get('content-security-policy') ?? '')?.[1];
-    const a = nonce(run());
+    const a = nonce(proxy(request()));
     expect(a).toBeDefined();
-    expect(nonce(run())).not.toBe(a);
+    expect(nonce(proxy(request()))).not.toBe(a);
   });
 
-  it('drops any CSP the client sent, so it cannot choose the nonce', () => {
-    const res = run({
-      'content-security-policy': "script-src 'nonce-attackerchosen0000000000=='",
-      'content-security-policy-report-only': "script-src 'nonce-attackerchosen0000000000=='",
-    });
+  it('drops any CSP the client sent, so it cannot choose the nonce', async () => {
+    const res = (await loadProxy())(
+      request('/', {
+        'content-security-policy': "script-src 'nonce-attackerchosen0000000000=='",
+        'content-security-policy-report-only': "script-src 'nonce-attackerchosen0000000000=='",
+      }),
+    );
     expect(forwarded(res, 'content-security-policy')).not.toContain('attackerchosen');
     expect(forwarded(res, 'content-security-policy-report-only')).toBeNull();
   });
 
-  it('CSP_REPORT_ONLY=1 sends the same policy as Report-Only and no enforced policy', () => {
-    vi.stubEnv('CSP_REPORT_ONLY', '1');
-    const res = run({ 'content-security-policy': "script-src 'nonce-attackerchosen0000000000=='" });
+  it('CSP_REPORT_ONLY=1 with RANVIER_ENV=staging: same policy as Report-Only only', async () => {
+    const proxy = await loadProxy({ CSP_REPORT_ONLY: '1', RANVIER_ENV: 'staging' });
+    const res = proxy(
+      request('/', { 'content-security-policy': "script-src 'nonce-attackerchosen0000000000=='" }),
+    );
     expect(res.headers.get('content-security-policy')).toBeNull();
     const sent = res.headers.get('content-security-policy-report-only');
     expect(sent).toMatch(/^default-src 'none'; script-src 'nonce-/);
@@ -166,9 +209,93 @@ describe('proxy', () => {
     expect(forwarded(res, 'content-security-policy')).toBeNull();
   });
 
+  it('CSP_REPORT_ONLY=1 outside staging still enforces', async () => {
+    for (const env of [
+      { CSP_REPORT_ONLY: '1' },
+      { CSP_REPORT_ONLY: '1', RANVIER_ENV: 'production' },
+    ]) {
+      const res = (await loadProxy(env))(request());
+      expect(res.headers.get('content-security-policy')).toMatch(/^default-src 'none'/);
+      expect(res.headers.get('content-security-policy-report-only')).toBeNull();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('connect-src comes from the build-time origin only, never NEXT_PUBLIC_API_URL', async () => {
+    const res = (await loadProxy({ NEXT_PUBLIC_API_URL: 'https://evil.example' }))(request());
+    expect(res.headers.get('content-security-policy')).toContain("connect-src 'self';");
+    vi.unstubAllEnvs();
+    const baked = (await loadProxy({ RANVIER_BUILD_API_ORIGIN: 'https://api.ranvier.example' }))(
+      request(),
+    );
+    expect(baked.headers.get('content-security-policy')).toContain(
+      "connect-src 'self' https://api.ranvier.example;",
+    );
+  });
+
+  it('a direct request to /_global-error is rewritten to the 404, under the policy', async () => {
+    const proxy = await loadProxy();
+    for (const path of [
+      '/_global-error',
+      '/_global-error/',
+      '/_global-error.html',
+      '/_global-error.rsc',
+    ]) {
+      const res = proxy(request(path));
+      expect(new URL(res.headers.get('x-middleware-rewrite') ?? 'http://x/').pathname).toBe(
+        '/_not-found',
+      );
+      expect(res.headers.get('content-security-policy')).toMatch(/^default-src 'none'/);
+      expect(forwarded(res, 'content-security-policy')).toBe(
+        res.headers.get('content-security-policy'),
+      );
+    }
+    for (const path of ['/_global-errors', '/x/_global-error', '/']) {
+      expect(proxy(request(path)).headers.get('x-middleware-rewrite')).toBeNull();
+    }
+  });
+
   // NODE_ENV is 'test' here; the production build's header is checked by e2e (csp.spec.ts).
-  it('adds no unsafe-eval outside next dev', () => {
-    expect(run().headers.get('content-security-policy')).not.toContain('unsafe-eval');
+  it('adds no unsafe-eval outside next dev', async () => {
+    const res = (await loadProxy())(request());
+    expect(res.headers.get('content-security-policy')).not.toContain('unsafe-eval');
+  });
+});
+
+describe('proxy matcher (compiled and matched by Next itself)', () => {
+  const runs = getMiddlewareRouteMatcher(
+    getMiddlewareMatchers(proxyConfig.matcher, { basePath: '', i18n: null }),
+  );
+  const matches = (path: string) => runs(path, { headers: {} } as never, {});
+
+  it('covers every path except /_next/static/*', () => {
+    const covered = [
+      '/',
+      '/index',
+      '/robots.txt',
+      '/favicon.ico',
+      '/sitemap.xml',
+      '/nope.',
+      '/a.b.c',
+      '/_next',
+      '/_next/',
+      '/_next/foo',
+      '/_next/staticx',
+      '/_next/static',
+      '/_next/image',
+      '/_next/data/x/y.json',
+      '/_global-error',
+      '/_not-found',
+      '/api/x',
+      '/%2e%2e/',
+      '/a%2fb',
+      '/trade/',
+      '/x.rsc',
+      '/.well-known/security.txt',
+    ];
+    expect(covered.filter((p) => !matches(p))).toEqual([]);
+    const bypass = ['/_next/static/chunks/a.js', '/_next/static/x.css', '/_next/static/'];
+    expect(bypass.filter((p) => matches(p))).toEqual([]);
   });
 });
 
@@ -246,5 +373,46 @@ describe('API origin (connect-src)', () => {
     vi.resetModules();
     vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.ranvier.example');
     await expect(import('../../next.config.ts')).resolves.toBeDefined();
+  });
+
+  it('next.config.ts bakes the validated origin into the build (empty when unset)', async () => {
+    const envOf = async (value: string | undefined) => {
+      vi.resetModules();
+      vi.stubEnv('NEXT_PUBLIC_API_URL', value ?? '');
+      return (await import('../../next.config.ts')).default.env;
+    };
+    expect(await envOf('https://API.ranvier.example/v1?x')).toEqual({
+      RANVIER_BUILD_API_ORIGIN: 'https://api.ranvier.example',
+    });
+    expect(await envOf(undefined)).toEqual({ RANVIER_BUILD_API_ORIGIN: '' });
+  });
+});
+
+describe('startup warning (instrumentation)', () => {
+  const warnings = async (env: Record<string, string>) => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    (await import('../../src/instrumentation.ts')).register();
+    const calls = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    return calls;
+  };
+
+  it('is silent when enforcing normally', async () => {
+    expect(await warnings({})).toEqual([]);
+  });
+
+  it('warns once when Report-Only is on (staging)', async () => {
+    const w = await warnings({ CSP_REPORT_ONLY: '1', RANVIER_ENV: 'staging' });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('CSP IS NOT ENFORCED');
+  });
+
+  it('warns once when a stray CSP_REPORT_ONLY=1 is ignored', async () => {
+    const w = await warnings({ CSP_REPORT_ONLY: '1', RANVIER_ENV: 'production' });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('CSP_REPORT_ONLY=1 IGNORED');
   });
 });
