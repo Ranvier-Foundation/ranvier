@@ -103,6 +103,31 @@ export const tokensQuerySchema = z.strictObject({
     .default(DEFAULT_TOKEN_LIMIT),
 });
 
+/** Ethereum-style native placeholders: no wallet can hold their keys. */
+const NOT_A_WALLET: ReadonlySet<string> = new Set([
+  '0x0000000000000000000000000000000000000000',
+  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+]);
+
+/**
+ * GET /v1/balances query (ADR 0009). `chain` must be a served EVM chain with a curated token
+ * list. `address` is a 20-byte hex account in any letter case (no EIP-55 checksum check: the
+ * data is public and read-only, and the web app sends the connected wallet's own address); it
+ * is lowercased here and never echoed in its raw form. The zero address and `0xeeee...eeee` are
+ * refused: they are native-coin placeholders, not wallets. Unknown or repeated parameters are
+ * refused.
+ */
+export function balancesQuerySchema(serves: (chain: ChainKey) => boolean) {
+  return z.strictObject({
+    chain: chainKey.refine((k) => k.startsWith('evm:') && serves(k), 'not a served EVM chain'),
+    address: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+      .transform((a) => a.toLowerCase() as `0x${string}`)
+      .refine((a) => !NOT_A_WALLET.has(a), 'not a wallet address'),
+  });
+}
+
 /**
  * A 400 body with a stable code and the offending field paths only (e.g. `sellToken.address`).
  * Validation messages are not returned; paths name the client's own input and leak nothing.

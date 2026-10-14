@@ -55,6 +55,7 @@ describe('GET /v1/chains', () => {
         nativeDecimals: 18,
         explorer: 'https://etherscan.io',
         quoting: true,
+        balances: false,
       },
       {
         key: 'evm:8453',
@@ -64,6 +65,7 @@ describe('GET /v1/chains', () => {
         nativeDecimals: 18,
         explorer: 'https://basescan.org',
         quoting: true,
+        balances: false,
       },
       {
         // Served, but no trusted router for it in this policy: listed, not quoting.
@@ -74,6 +76,7 @@ describe('GET /v1/chains', () => {
         nativeDecimals: 18,
         explorer: 'https://arbiscan.io',
         quoting: false,
+        balances: false,
       },
     ]);
     expect(res.body).not.toMatch(/defillama|stablecoins|knownDecimals|wrappedNative/i);
