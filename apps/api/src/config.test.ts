@@ -44,6 +44,26 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ MAX_ORACLE_DEVIATION_BPS: '-1' })).toThrow();
   });
 
+  it('defaults and bounds the balance-read settings', () => {
+    expect(loadConfig({})).toMatchObject({
+      RPC_REQUEST_TIMEOUT_MS: 1_500,
+      RPC_RANK_INTERVAL_MS: 30_000,
+      BALANCES_DEADLINE_MS: 3_000,
+      BALANCES_CACHE_TTL_MS: 3_000,
+    });
+    expect(loadConfig({ RPC_RANK_INTERVAL_MS: '0' }).RPC_RANK_INTERVAL_MS).toBe(0);
+    expect(loadConfig({ BALANCES_CACHE_TTL_MS: '0' }).BALANCES_CACHE_TTL_MS).toBe(0);
+    for (const [name, value] of [
+      ['RPC_RANK_INTERVAL_MS', '999'],
+      ['RPC_RANK_INTERVAL_MS', '600001'],
+      ['RPC_REQUEST_TIMEOUT_MS', '99'],
+      ['BALANCES_DEADLINE_MS', '10001'],
+      ['BALANCES_CACHE_TTL_MS', '-1'],
+    ] as const) {
+      expect(() => loadConfig({ [name]: value }), `${name}=${value}`).toThrow();
+    }
+  });
+
   it('parses the local signer chain allowlist', () => {
     expect(loadConfig({}).LOCAL_SIGNER_CHAIN_IDS).toBeUndefined();
     expect(loadConfig({ LOCAL_SIGNER_CHAIN_IDS: '31337, 84532' }).LOCAL_SIGNER_CHAIN_IDS).toEqual([

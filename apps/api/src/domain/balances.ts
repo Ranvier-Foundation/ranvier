@@ -210,7 +210,8 @@ export class BalanceService {
         if (work.waiters === 0 && !work.settled) {
           // Nobody wants the result any more: stop the RPC calls, and let the next request
           // start fresh work instead of joining an aborted one.
-          if (this.inFlight.get(key) === work) this.inFlight.delete(key);
+          // (Unsettled work is always the one in flight: none can replace it before this.)
+          this.inFlight.delete(key);
           work.controller.abort();
         }
       };

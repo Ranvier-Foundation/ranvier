@@ -64,7 +64,6 @@ export const MULTICALL3_CHAINS: ReadonlySet<number> = new Set(
     .map((c) => c.id),
 );
 
-const MAX_UINT256 = 2n ** 256n - 1n;
 /** Block numbers beyond this are absurd for any chain (2^53, still exact as a JS number). */
 const MAX_BLOCK_NUMBER = 2n ** 53n;
 const QUANTITY = /^0x(0|[1-9a-f][0-9a-f]*)$/i;
@@ -85,14 +84,14 @@ export interface ReaderLog {
 export interface ViemChainReaderOptions {
   /** Endpoints per numeric chain ID, in preference order. */
   endpoints: ReadonlyMap<number, readonly RpcEndpointConfig[]>;
-  /** Per JSON-RPC request, per endpoint (default 1500 ms). */
+  /** Per JSON-RPC request, per endpoint (default 1500 ms; 0 = only the caller's deadline). */
   requestTimeoutMs?: number;
   /** Retries of a whole fallback pass on transient errors (default 1). */
   retryCount?: number;
   /** Base delay between retries, doubled each time (default 100 ms). */
   retryDelayMs?: number;
-  /** viem endpoint ranking: sampled every `intervalMs`. Default off. */
-  rank?: false | { intervalMs: number; sampleCount?: number };
+  /** viem endpoint ranking: every endpoint sampled every `intervalMs` (last 10 samples). */
+  rank?: false | { intervalMs: number };
   /** An unreachable endpoint is asked for its chain ID again after this (default 30 s). */
   reverifyAfterMs?: number;
   /** A block older than this is stale (default 300 s). */
@@ -158,8 +157,8 @@ export function describeError(err: unknown): { error: string; status?: number; c
 
 /** True when an RPC error is an execution revert (deterministic: the token call itself failed). */
 function isRevert(err: unknown): boolean {
-  if (!(err instanceof BaseError)) return false;
   return (
+    err instanceof BaseError &&
     err.walk((e) => {
       if ((e as { code?: unknown }).code === ExecutionRevertedError.code) return true;
       const details = (e as { details?: unknown }).details;
@@ -168,12 +167,15 @@ function isRevert(err: unknown): boolean {
   );
 }
 
+/** True when every attempt timed out (viem's per-request timeout). */
 function hasTimeout(err: unknown): boolean {
-  if (err instanceof BaseError) return err.walk((e) => e instanceof TimeoutError) !== null;
-  return false;
+  return err instanceof BaseError && err.walk((e) => e instanceof TimeoutError) !== null;
 }
 
-/** A JSON-RPC quantity as a bigint, or a `ChainReadError` for anything else. */
+/**
+ * A JSON-RPC quantity as a bigint, or a `ChainReadError` for anything else. At most 64 hex
+ * digits, so never above 2^256 - 1.
+ */
 function quantity(value: unknown, reason: string): bigint {
   if (typeof value !== 'string' || value.length > 66 || !QUANTITY.test(value)) {
     throw new ChainReadError('rpc_unavailable', reason);
@@ -181,11 +183,12 @@ function quantity(value: unknown, reason: string): bigint {
   return BigInt(value);
 }
 
-/** An ABI `uint256` return: exactly one 32-byte word, else null. */
+/**
+ * An ABI `uint256` return: exactly one 32-byte word, else null. 64 hex digits cannot exceed
+ * 2^256 - 1, so an absurd value is refused by its length.
+ */
 function uint256Word(data: Hex): bigint | null {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(data)) return null;
-  const value = BigInt(data);
-  return value <= MAX_UINT256 ? value : null;
+  return /^0x[0-9a-fA-F]{64}$/.test(data) ? BigInt(data) : null;
 }
 
 /** Thrown into viem when an endpoint has not proved its chain; viem moves to the next one. */
@@ -240,7 +243,7 @@ export class ViemChainReader implements ChainReader {
       const rank = opts.rank
         ? {
             interval: opts.rank.intervalMs,
-            sampleCount: opts.rank.sampleCount ?? 10,
+            sampleCount: 10,
             timeout: this.requestTimeoutMs,
             ping: ({ transport }: { transport: { request: PublicClient['request'] } }) =>
               transport.request({ method: 'eth_blockNumber' }),
