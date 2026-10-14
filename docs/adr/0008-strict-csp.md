@@ -51,8 +51,9 @@ default-src 'none'; script-src 'nonce-{N}' 'strict-dynamic' 'report-sample'; sty
 - **No `'unsafe-inline'`, no `'self'` and no host in `script-src`.** Only nonced scripts, and what they load, run. `'report-sample'` adds the first characters of a blocked script to the violation.
 - **`style-src` has no `'unsafe-inline'`.** The app emits no inline style (PR #22: ESLint forbids the `style` prop, `<style>` and `dangerouslySetInnerHTML`; the app has its own 404 and global-error pages).
 - **`next dev` only:** `'unsafe-eval'` for scripts (React rebuilds server error stacks with `eval`) and `style-src 'self' 'unsafe-inline'`, because Turbopack's dev CSS loader injects un-nonced `<style>` elements (33 violations measured without it). A production build never contains `unsafe-*`; unit tests, e2e tests and the CI header check all assert this.
-- **`{API_ORIGIN}`** is validated by `apiOrigin()`, unchanged: an http(s) origin only, https in production except loopback. next.config.ts calls it, so a bad `NEXT_PUBLIC_API_URL` fails the build.
-- **`CSP_REPORT_ONLY=1`** (exactly, read at runtime) sends the same policy as `Content-Security-Policy-Report-Only` instead. It exists for a first run on staging behind the real proxy and CDN. Any other value enforces.
+- **`{API_ORIGIN}`** is decided at build time only. next.config.ts validates `NEXT_PUBLIC_API_URL` with `apiOrigin()` (an http(s) origin only, https in production except loopback), so a bad value fails the build. It then bakes the origin into the build as `RANVIER_BUILD_API_ORIGIN` through Next's `env` option, which replaces it with a literal (empty when unset). The proxy reads only that literal. Before this, an unset build value left `process.env.NEXT_PUBLIC_API_URL` to be read at runtime: a server variable could change `connect-src`, and an invalid one answered every request with a 500. Runtime is the wrong place for this anyway: the client bundle bakes `NEXT_PUBLIC_API_URL` at build, so a runtime-only value could never be used by the page. Changing the API origin means rebuilding, as it already did for the client.
+- **Report-Only only on staging.** `CSP_REPORT_ONLY=1` together with `RANVIER_ENV=staging` (exact values, read once at server start) sends the same policy as `Content-Security-Policy-Report-Only`, for a first run behind the real proxy and CDN. `CSP_REPORT_ONLY=1` without `RANVIER_ENV=staging` is **ignored**: the policy stays enforced, so a flag left over from staging cannot turn production into report-only. Both cases log one `[security]` warning at server start (`src/instrumentation.ts`).
+- **`/_global-error`.** Next's built-in error route answers its own URL with a prerendered page that is cacheable (`s-maxage=31536000`), carries inline styles and has no nonces. The proxy rewrites any direct request for it to the app's 404, under the policy. Real errors still render the error page inside the failing request, which never passes through that URL.
 
 ### Other headers (next.config.ts, every response)
 
@@ -107,14 +108,30 @@ Revisit SRI when Next supports it fully for Turbopack.
   - dev differs only in its two documented sources;
   - nonces are 16 bytes of base64 and unique over 10,000 calls;
   - a malformed nonce throws;
-  - the proxy drops client-sent CSP headers, uses a new nonce per request and honours `CSP_REPORT_ONLY`;
+  - the proxy drops client-sent CSP headers and uses a new nonce per request;
+  - Report-Only needs both flags; a stray `CSP_REPORT_ONLY=1` is ignored; each case warns exactly once;
+  - `connect-src` comes only from the baked origin, and next.config.ts bakes it;
+  - `/_global-error` is rewritten to the 404;
+  - the proxy `matcher`, compiled and matched by Next's own functions, skips `/_next/static/*` and nothing else (dotted paths, `/_next/…`, encoded paths and data routes are all covered);
   - the static headers, and every `apiOrigin()` case, including a bad value failing next.config.ts.
 - **e2e (`tests/e2e/csp.spec.ts`, production build), on every route in `tests/e2e/routes.ts` and on the 404:**
   - the exact header, a different nonce on a second request, the nonce on every `<script>`, `private, no-store`;
-  - zero violations and zero CSP console messages at 1440 and 390 px; through the connect dialog, a connected wallet, the wallet and network menus and a reload; and through a client-side navigation that loads a new chunk with Next's loader (404 to "Back to Swap").
+  - zero violations and zero CSP console messages at 1440 and 390 px; through the connect dialog, a connected wallet, the wallet and network menus and a reload; and through a client-side navigation that loads a new chunk with Next's loader (404 to "Back to Swap");
+  - matcher coverage: every path in `PROBE_PATHS` (`/robots.txt`, `/favicon.ico`, `/nope.`, `/_next/foo`, `/%2e%2e/`, `/a%2fb`, `/_next/data/x/y.json`, `/api/x`, `/_global-error`, `/_not-found`), sent byte for byte, is app HTML under the policy, with the nonce on every script and `no-store`;
+  - `HEAD /` and `POST /` carry the policy;
+  - `/_global-error` is a non-cacheable 404;
+  - build-asset misses are plain-text 404s with no HTML.
+  - Proven to bite: with a narrower matcher (`/((?!_next/|.*\..*).*)`, as written in a TypeScript string: `'/((?!_next/|.*\\..*).*)'`), the matcher unit test, five matcher-coverage e2e tests and the CI header check all fail.
 - **Negative e2e:** the document is intercepted and seven payloads are injected: an inline script, an `onerror` handler, a `javascript:` link, an `evil.example` script, a same-origin chunk, a style attribute and a `<style>` element. None takes effect, exactly seven enforced violations fire, and the app keeps working.
 - **Shared fixture (`tests/e2e/fixtures.ts`).** Every e2e test fails on any CSP violation or CSP console message, any request off the origin, any console or page error, or any unexpected error response.
-- **CI (`pnpm --filter @ranvier/web check:headers`).** Starts the standalone `server.js` twice (enforcing, then with `CSP_REPORT_ONLY=1`) and checks the headers, the nonce change and the nonce on every `<script>`.
+- **Retries cannot hide a CSP failure.** CI retries a failed test once. `csp.spec.ts` runs with `retries: 0`. For every other test, the fixture records a CSP violation on disk, and any retry of that test fails with it.
+- **Tests wait for hydration, not timing.** WalletProviders sets `data-hydrated` on `<html>` from a mount effect, which runs after every child effect. Tests wait for it before using the keyboard.
+- **CI (`pnpm --filter @ranvier/web check:headers`).** Starts the standalone `server.js` three times:
+  - enforcing, with hostile runtime `NEXT_PUBLIC_API_URL` and `RANVIER_BUILD_API_ORIGIN` values that must change nothing;
+  - with `CSP_REPORT_ONLY=1 RANVIER_ENV=staging` (Report-Only plus a warning);
+  - with `CSP_REPORT_ONLY=1 RANVIER_ENV=production` (ignored, enforced, plus a warning).
+
+  Each time it checks the pages and probe paths (twice each), HEAD and POST, `/_global-error`, and build-asset misses.
 
 ## Consequences
 
@@ -123,10 +140,16 @@ Revisit SRI when Next supports it fully for Turbopack.
 - Token logos are served from our own origin. `img-src` is never widened to `https:`.
 - A Next upgrade can change how nonces are applied. The e2e suite and the CI header check fail if it does.
 - A cached HTML response would reuse a nonce. The runbook forbids caching HTML at Caddy and Cloudflare.
+- **Rate limiting is a hard pre-production requirement.** Every page is rendered per request and HTML cannot be cached, so a request for any made-up path costs about as much as `/`. Measured on one process: about 420 req/s for a random 404, against about 5,750 req/s for a static miss. Production must not go live without per-IP limits and burst challenges at the edge, sized Node workers and a passing load test (`docs/runbooks/web-deployment-headers.md`, "Rate limiting"; the API's own limits are in `docs/runbooks/edge-rate-limiting.md`).
+- HSTS with `includeSubDomains; preload` is already served. Every subdomain must serve HTTPS before the first production deploy, not only before the preload submission.
 
 ### What the first signing PR must assume
 
 - The policy is enforced, not Report-Only, in every environment, and `csp.spec.ts` and the CI header check are green.
+- **Release gate:** the release checklist in `docs/runbooks/web-deployment-headers.md` passes against production:
+  - the enforcing `Content-Security-Policy` header is present and there is no Report-Only header;
+  - neither `CSP_REPORT_ONLY` nor `RANVIER_ENV=staging` is set, and the server log has no `[security]` line;
+  - the rate limits are active and the load test shows them.
 - No new script origin and no `unsafe-*` source. A wallet SDK, WalletConnect or WebHID support is its own ADR, with the exact origins and header changes it needs (for example `same-origin-allow-popups`, `hid=(self)`).
 - `connect-src` stays `'self'` plus the API origin; chain reads go through the API.
 - The review and sign screens are new routes in `tests/e2e/routes.ts`. They contain no inline handlers, `dangerouslySetInnerHTML` or `style` props.

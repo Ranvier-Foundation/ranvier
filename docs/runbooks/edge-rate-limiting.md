@@ -1,6 +1,13 @@
-# Runbook: rate limiting at the edge (TODO)
+# Runbook: rate limiting at the edge (API) (TODO)
 
-Status: **not implemented**. Required before any public deployment.
+Status: **not implemented**. A hard requirement before any public deployment: production must not go live without it.
+
+This runbook covers the API. The web app has its own limits, which are just as mandatory, in [web-deployment-headers.md](web-deployment-headers.md#rate-limiting-hard-pre-production-requirement). Every web page is rendered per request, so unthrottled requests for made-up paths are as expensive as the home page. Both are enforced at the same edge in the same way:
+
+- Cloudflare WAF rate limiting rules in front, then Caddy with the `caddy-ratelimit` plugin at the origin.
+- The key is the real client IP. Caddy trusts only Cloudflare's ranges and reads `CF-Connecting-IP`; the origin firewall accepts only Cloudflare.
+- Over the limit, answer `429` with `Retry-After`.
+- Verify with `node apps/web/scripts/bench.mjs <url> 2000 20` from one machine; it counts responses by status code.
 
 The quote API has no built-in rate limiting. Each `POST /v1/quotes` can trigger paid upstream calls (0x) and price-oracle lookups. Unlimited traffic can therefore exhaust the 0x quota or run up costs, and can degrade quotes for everyone.
 
@@ -12,3 +19,4 @@ Rate limiting belongs at the edge (reverse proxy or WAF in front of the self-hos
 - [ ] Request body size is already capped at 16 KiB by the API (`413 payload_too_large`); keep the edge cap at or below that.
 - [ ] Alert on sustained 429s and on the 0x quota approaching its limit.
 - [ ] Decide on per-wallet limits once wallets authenticate (not before: `taker` is client-supplied and free to vary).
+- [ ] Load test each limited route on staging with `bench.mjs` (POST routes need a body; adapt the request) and confirm 429s appear once the budget is used up.
