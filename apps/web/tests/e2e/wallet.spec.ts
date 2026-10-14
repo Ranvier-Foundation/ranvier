@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { getAddress } from 'viem';
-import { box, gotoSwap, RGB, styles } from './helpers';
+import { box, gotoSwap, hydrated, RGB, styles } from './helpers';
 import {
   ACCOUNT_A,
   ACCOUNT_B,
@@ -150,6 +150,7 @@ test.describe('connect flow', () => {
     await gotoSwap(page, 1440, 900);
     await connect(page);
     await page.reload();
+    await hydrated(page);
     await expect(walletPill(page)).toBeVisible();
     const html = await (await request.get('/')).text();
     expect(html).not.toMatch(/0x[0-9a-fA-F]{40}/);
@@ -170,6 +171,7 @@ test.describe('connect flow', () => {
       page.getByRole('main').getByRole('button', { name: 'Connect wallet' }),
     ).toBeVisible();
     await page.reload();
+    await hydrated(page);
     await expect(connectButton(page)).toBeVisible();
     await expect(walletPill(page)).toHaveCount(0);
   });

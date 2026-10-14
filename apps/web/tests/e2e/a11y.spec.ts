@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { gotoSwap, RGB, styles } from './helpers';
+import { gotoSwap, hydrated, RGB, styles } from './helpers';
 import { ROUTES } from './routes';
 
 const VIEWPORTS = [
@@ -23,6 +23,7 @@ test.describe('axe', () => {
       test(`${route}: no violations at ${w}x${h}`, async ({ page }) => {
         await page.setViewportSize({ width: w, height: h });
         await page.goto(route);
+        await hydrated(page);
         await page.evaluate(() => document.fonts.ready);
         expect((await scan(page)).violations).toEqual([]);
       });

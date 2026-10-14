@@ -5,6 +5,7 @@ import {
   contentSecurityPolicy,
   staticSecurityHeaders,
 } from '../../src/lib/security/csp';
+import { hydrated } from './helpers';
 import { expect, test, type CspViolation } from './fixtures';
 import { NOT_FOUND_ROUTE, PROBE_PATHS, ROUTES, STATIC_MISS_PATHS } from './routes';
 import { DEFAULT_WALLET, installWallets } from './wallet-fixture';
@@ -159,6 +160,7 @@ test.describe('no violations', () => {
       test(`${route} at ${width}`, async ({ page, csp }) => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(route);
+        await hydrated(page);
         await page.evaluate(() => document.fonts.ready);
         // Hydrated: the header's client components respond.
         const more = header(page).getByRole('button', { name: 'More' });
@@ -173,6 +175,7 @@ test.describe('no violations', () => {
   test('connect dialog, connected wallet, wallet and network menus', async ({ page, csp }) => {
     await installWallets(page);
     await page.goto('/');
+    await hydrated(page);
     await header(page).getByRole('button', { name: 'Connect wallet' }).click();
     const dialog = page.getByRole('dialog', { name: 'Connect wallet' });
     await expect(dialog).toBeVisible();
@@ -191,6 +194,7 @@ test.describe('no violations', () => {
     await expect(network).toHaveAttribute('aria-expanded', 'true');
     // Reload: the persisted connection comes back under the same policy.
     await page.reload();
+    await hydrated(page);
     await expect(pill).toBeVisible();
     expect(csp.violations).toEqual([]);
     expect(csp.console).toEqual([]);
@@ -198,6 +202,7 @@ test.describe('no violations', () => {
 
   test('client-side navigation loads a new chunk under strict-dynamic', async ({ page, csp }) => {
     await page.goto(NOT_FOUND_ROUTE);
+    await hydrated(page);
     await page.evaluate(() => {
       (window as unknown as { __sameDocument?: boolean }).__sameDocument = true;
     });
@@ -255,6 +260,7 @@ test.describe('injected markup is refused', () => {
     });
 
     await page.goto('/');
+    await hydrated(page);
     expect(gadget).not.toBe('');
     await page.locator('#p-js').click();
     // The app itself still runs under the policy.
