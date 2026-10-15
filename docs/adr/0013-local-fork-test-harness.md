@@ -247,6 +247,8 @@ CI runs the harness in its own job with no secrets, using `foundry-rs/foundry-to
 
 ## Work breakdown (dependency order; SR = security-reviewer must approve)
 
+PR 1 status (2026-10-15): built on `feat/harness-mock-contracts`. The mocks live in `contracts/test/harness/` rather than `contracts/harness/`, so the production build, Slither and coverage never see them; addresses are in the [runbook](../runbooks/local-harness.md).
+
 | #   | PR                                                                                                                                                                           | Owner                         | Size | SR  |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---- | --- |
 | 1   | Harness mocks (section 3) with forge tests; `DeployHarness.s.sol`; forge `HarnessSmoke.s.sol` (approve and swap on plain anvil); the `Deploy.s.sol` role guard and its tests | contract-engineer             | M    | yes |
