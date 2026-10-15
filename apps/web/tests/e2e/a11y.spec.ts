@@ -57,7 +57,7 @@ test.describe('keyboard', () => {
       'Pay token: ETH, change',
       'Show amount in USD',
       'Switch pay and receive',
-      'Change chain, currently Base',
+      'Change chain, currently Ethereum',
       'Receive token: USDC, change',
       'Connect wallet',
     ];

@@ -73,9 +73,12 @@ export function useSwap(): SwapForm {
 
   const [balanceAttempt, setBalanceAttempt] = useState(0);
   const payChain = pay?.ref.chain;
+  // Read only once there is an amount to compare it with: the wallet address is not sent to the API
+  // for a screen nobody has typed on (the quote request sends it anyway as soon as there is one).
+  const wantsBalance = amount.kind === 'ok';
   const targets = useMemo<ChainKey[]>(
-    () => (taker !== undefined && payChain !== undefined ? [payChain] : []),
-    [taker, payChain],
+    () => (taker !== undefined && payChain !== undefined && wantsBalance ? [payChain] : []),
+    [taker, payChain, wantsBalance],
   );
   const chainList = chains.status === 'ready' ? chains.chains : NO_CHAINS;
   const balances = useBalances(taker, chainList, targets, balanceAttempt);
