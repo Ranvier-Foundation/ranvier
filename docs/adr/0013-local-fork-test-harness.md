@@ -192,6 +192,8 @@ Receipts and simulation go through the wallet provider: a wagmi transport over E
 
 On chains 1, 8453 and 42161 it refuses any `INITIAL_ROUTERS` at all. There is one forge test per refused role.
 
+Hardened after the PR 1 security review: the published list also covers every address up to `0x…01ff`, forge's default sender and test contract, the `0x…dEaD` and `0xdEAD…2069` burn addresses and mnemonic accounts 20-29. The three-chain rule became an allowlist: `INITIAL_ROUTERS` may be non-empty only on 84532, 11155111, 421614 and 31337 (`LOCAL_SIGNER_DEFAULT_CHAINS`). A malformed `INITIAL_ROUTERS` reverts, and duplicates are refused.
+
 **Funding.** `anvil_setBalance` for ETH, and the harness tokens' open `mint`. Both are deterministic.
 
 **Keys and gitleaks.**
@@ -247,7 +249,7 @@ CI runs the harness in its own job with no secrets, using `foundry-rs/foundry-to
 
 ## Work breakdown (dependency order; SR = security-reviewer must approve)
 
-PR 1 status (2026-10-15): built on `feat/harness-mock-contracts`. The mocks live in `contracts/test/harness/` rather than `contracts/harness/`, so the production build, Slither and coverage never see them; addresses are in the [runbook](../runbooks/local-harness.md).
+PR 1 status (2026-10-15): built on `feat/harness-mock-contracts`. The mocks live in `contracts/test/harness/` rather than `contracts/harness/`, so Slither and coverage skip them. A local `forge build` still compiles them into `out/`; that is harmless, because `Deploy.s.sol`'s metadata imports only `FeeWrapper` and nothing publishes `out/`; addresses are in the [runbook](../runbooks/local-harness.md).
 
 | #   | PR                                                                                                                                                                           | Owner                         | Size | SR  |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---- | --- |
