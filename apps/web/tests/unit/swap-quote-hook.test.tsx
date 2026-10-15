@@ -86,7 +86,7 @@ const swap = (buy: bigint, deadlineSec: number): SwapQuote => ({
   provider: '0x',
   routeCount: 2,
   fee: { bps: 20, reason: 'tier-under-10k', amount: 1n, waivedUsdCents: 0n },
-  deadlineSec,
+  deadlineSec: BigInt(Math.floor(deadlineSec)),
 });
 const wrap = (): WrapQuote => ({
   kind: 'wrap',

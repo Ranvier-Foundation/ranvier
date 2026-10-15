@@ -51,6 +51,15 @@ export function staticView(): SwapPanelView {
   };
 }
 
+/** The row heading as plain text: "Pay on Ethereum", or "Pay" when no token is chosen. */
+function headingText(side: Side, view: SwapPanelView): string {
+  const { chain } = view[side];
+  if (chain === undefined) {
+    return t(side === 'pay' ? 'swap.pay.heading.none' : 'swap.receive.heading.none');
+  }
+  return t(side === 'pay' ? 'swap.pay.heading' : 'swap.receive.heading', { chain });
+}
+
 /** "Pay on Ethereum": the chain name opens the token picker (a link to the route when static). */
 function RowHeading({
   htmlFor,
@@ -72,7 +81,8 @@ function RowHeading({
   const text = t(side === 'pay' ? 'swap.pay.heading' : 'swap.receive.heading', { chain });
   const [before, after] = text.split(chain);
   const label = t('swap.chain.change.label', { chain });
-  const style = 'text-sub no-underline transition hover:text-accent focus-visible:text-accent';
+  const style =
+    'hit-area text-sub no-underline transition hover:text-accent focus-visible:text-accent';
   return (
     <label htmlFor={htmlFor} className="text-small text-sub">
       {before}
@@ -153,7 +163,7 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
           <Link
             href="/settings"
             aria-label={t('swap.settings.label')}
-            className="flex h-32 items-center gap-6 text-caption text-sub no-underline transition hover:opacity-70"
+            className="hit-area flex h-32 items-center gap-6 text-caption text-sub no-underline transition hover:opacity-70"
           >
             {t('swap.settings.auto')}
             <SlippageIcon />
@@ -175,6 +185,8 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
                       view.onAmountChange?.(e.target.value),
                   }
                 : {})}
+              /* The label holds a button (the chain name), whose name would end up in the field's: the field is named by the plain heading. */
+              aria-label={headingText('pay', view)}
               {...(view.amountDescribedBy ? { 'aria-describedby': view.amountDescribedBy } : {})}
               className={`${AMOUNT} -mx-4 min-w-field-min field-sizing-content border-none bg-transparent px-4 font-normal placeholder:text-sub`}
             />

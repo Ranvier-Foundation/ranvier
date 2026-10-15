@@ -285,6 +285,11 @@ export class MockApi {
     this.overrides.unshift(fn);
   }
 
+  /** Drops every override: the API is back to its normal answers. */
+  clearOverrides(): void {
+    this.overrides = [];
+  }
+
   /** Requests to `/v1/<name>`, optionally narrowed by method. */
   calls(name: 'chains' | 'tokens' | 'balances' | 'quotes', method?: string): ApiRequest[] {
     return this.requests.filter(

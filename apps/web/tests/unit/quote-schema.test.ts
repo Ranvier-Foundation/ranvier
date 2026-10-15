@@ -28,7 +28,7 @@ describe('parseQuote: a routed swap', () => {
       provider: '0x',
       routeCount: 2,
       fee: { bps: 20, reason: 'tier-under-10k', amount: 100_000_000_000_000n, waivedUsdCents: 0n },
-      deadlineSec: 1_790_000_060,
+      deadlineSec: 1_790_000_060n,
     });
   });
 

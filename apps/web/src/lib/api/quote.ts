@@ -39,7 +39,7 @@ export type SwapQuote = {
   routeCount: number;
   fee: QuoteFee;
   /** Absolute expiry as the server wrote it: unix seconds. */
-  deadlineSec: number;
+  deadlineSec: bigint;
 };
 
 export type WrapQuote = {
@@ -215,7 +215,7 @@ function parseSwap(o: Json, ask: QuoteAsk, fee: QuoteFee): SwapQuote {
     provider,
     routeCount,
     fee,
-    deadlineSec: Number(deadline),
+    deadlineSec: BigInt(deadline),
   };
 }
 

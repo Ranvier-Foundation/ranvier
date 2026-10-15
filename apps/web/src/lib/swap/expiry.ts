@@ -45,14 +45,14 @@ export type ExpiryResult =
  *   instead (`clock`), and the caller asks the person to fix the time.
  */
 export function expiryFromDeadline(
-  deadlineSec: number,
+  deadlineSec: number | bigint,
   clock: Clock,
   sentMono: number,
   receivedMono: number,
   capMs: number = QUOTE_LIFETIME_CAP_MS,
 ): ExpiryResult {
   const receivedWall = clock.wall();
-  const leftMs = deadlineSec * 1000 - receivedWall;
+  const leftMs = Number(deadlineSec) * 1000 - receivedWall;
   if (leftMs <= 0) return { ok: false, reason: 'clock' };
   const byDeadline = receivedMono + leftMs;
   const byCap = sentMono + capMs;
