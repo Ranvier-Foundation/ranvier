@@ -6,7 +6,13 @@ import type { BalanceService } from '../domain/balances.js';
 import { compareProviderQuotes } from '../domain/orchestrator.js';
 import type { RoutePolicy } from '../domain/route-policy.js';
 import { vetRoute } from '../domain/route-safety.js';
-import { buildSignedSwap, evmChainId } from '../domain/swap-quote.js';
+import {
+  directAnswerEcho,
+  signedAnswerEcho,
+  signedDeadline,
+  type QuoteTiming,
+} from '../domain/quote-answer.js';
+import { buildSignedSwap, sameChainEvmContext } from '../domain/swap-quote.js';
 import { usdCents } from '../domain/usd.js';
 import { buildDirectWrap } from '../domain/wrap.js';
 import type { PriceOracle, SwapHistory, TokenPrice } from '../ports/price-oracle.js';
@@ -167,7 +173,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         req.log.error({ fee }, 'wrap detected but fee schedule did not return a free wrap');
         return reply.code(500).send({ error: 'internal_error' });
       }
-      return toJson({ fee, direct: wrap });
+      // The chain the transaction is for, from the validated request (ADR 0012).
+      return toJson({ fee, direct: wrap, ...directAnswerEcho(request) });
     }
 
     if (deps.providers.length === 0 || !deps.prices || !deps.history || !deps.routePolicy) {
@@ -212,10 +219,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return reply.code(502).send({ error: 'no_route', failures: comparison.failures });
     }
     const signing = deps.signing;
-    const chainId = evmChainId(request.sellToken);
-    const canSign =
-      signing && chainId !== undefined && request.buyToken.chain === request.sellToken.chain;
-    if (!canSign) return toJson({ fee, ...comparison });
+    const chain = sameChainEvmContext(request);
+    if (!signing || !chain) return toJson({ fee, ...comparison });
+    const { chainId } = chain;
     // The signer must accept the chain, the chain must have a trusted router policy, and a
     // mainnet needs a KMS signer (ADR 0005).
     if (!canSignChain(signing.signer, routePolicy, chainId)) {
@@ -223,7 +229,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return reply.code(503).send({ error: 'signing_unavailable' });
     }
 
-    const nowSeconds = Math.floor((signing.now ?? Date.now)() / 1000);
+    // One clock reading: the signed deadline is computed from it and it is echoed as serverTime.
+    const timing: QuoteTiming = {
+      serverTime: Math.floor((signing.now ?? Date.now)() / 1000),
+      ttlSeconds: signing.ttlSeconds,
+    };
     let swap;
     try {
       swap = await buildSignedSwap({
@@ -232,7 +242,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         route: comparison.best,
         feeWrapper: signing.feeWrapper,
         signer: signing.signer,
-        deadline: BigInt(nowSeconds + signing.ttlSeconds),
+        deadline: signedDeadline(timing),
         nonce: (signing.nonce ?? randomNonce)(),
       });
     } catch (err: unknown) {
@@ -243,7 +253,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       req.log[level]({ chainId, reason: err.reason, err: errSummary(err) }, 'signing failed');
       return reply.code(503).send({ error: 'signing_unavailable' });
     }
-    return toJson({ fee, ...comparison, swap });
+    // The chain and timing echo is checked against the signed quote (ADR 0012); `swap` is
+    // listed field by field so the signing context is not serialised twice.
+    const echo = signedAnswerEcho(request, swap, timing);
+    const { quote, signature, transaction } = swap;
+    return toJson({ fee, ...comparison, swap: { quote, signature, transaction }, ...echo });
   });
 
   return app;

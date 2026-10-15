@@ -90,3 +90,26 @@ export interface ProviderQuote {
   /** Router to call and its calldata (EVM) or serialised transaction (Solana). */
   tx: { to: string; data: string; value: bigint };
 }
+
+/**
+ * The chain a `POST /v1/quotes` answer was built for, at the top level of a signed swap answer
+ * and of a direct wrap/unwrap answer (ADR 0012). `sellChain` and `buyChain` are the request's own
+ * chain keys; `chainId` is the EIP-712 domain chain ID the swap was signed for (or, for a direct
+ * wrap, the chain of its transaction). A client must compare all three with the chain it asked.
+ */
+export interface QuoteChainEcho {
+  sellChain: ChainKey;
+  buyChain: ChainKey;
+  chainId: number;
+}
+
+/**
+ * Timing of a signed swap answer (ADR 0012). `serverTime` is the server clock reading (unix
+ * seconds) the signed deadline was computed from, so `deadline == serverTime + ttlSeconds`. The
+ * signed deadline stays authoritative; these let a client count the remaining time from when it
+ * sent the request without trusting its own wall clock.
+ */
+export interface QuoteTimingEcho {
+  serverTime: number;
+  ttlSeconds: number;
+}
