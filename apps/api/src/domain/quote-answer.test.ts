@@ -19,7 +19,7 @@ const token = (chain: TokenRef['chain'], address = SAME_ADDRESS): TokenRef => ({
 
 const fee: FeeQuote = { bps: 20, reason: 'tier-under-10k', amount: 2_000_000n, waivedUsd: 0n };
 // Vetting is covered in route-safety.test.ts; here the route stands in for a vetted one.
-const route = {
+const unvetted: ProviderQuote = {
   provider: '0x',
   buyAmount: 4n * 10n ** 17n,
   minBuyAmount: 39n * 10n ** 16n,
@@ -27,7 +27,8 @@ const route = {
   gasCostUsd: 5n,
   route: [],
   tx: { to: '0x0000000000001ff3684f28c67538d4d072c22734', data: '0xabcdef', value: 0n },
-} satisfies ProviderQuote as VettedRoute;
+};
+const route = unvetted as VettedRoute;
 
 const requestOn = (chain: TokenRef['chain']): QuoteRequest => ({
   sellToken: token(chain),
