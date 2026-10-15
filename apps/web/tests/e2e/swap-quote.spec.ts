@@ -119,6 +119,8 @@ test.describe('a quote is shown for a typed amount', () => {
       'The lowest amount this quote allows, not the amount to expect.',
     );
     await expect(details).toContainText('1 USDC = 0.0004008 ETH');
+    // The rates are what you pay against what you receive, so they include the fee.
+    await expect(details).toContainText('These rates include the Ranvier fee');
     expect(quotes(api)).toHaveLength(1);
   });
 });
@@ -196,6 +198,62 @@ test.describe('what is sent and what is kept', () => {
         ),
       ),
     ).not.toContain(expect.stringContaining('0x00000000000'));
+  });
+
+  test("the wallet address never reaches sessionStorage, the history, the URL, a cookie or the console (wagmi's own store is the one place)", async ({
+    page,
+  }) => {
+    // What wagmi keeps, checked on 2026-10: `wagmi.store` (the connection, which holds the
+    // connected account's address, so it can reconnect) and `wagmi.recentConnectorId` (a wallet id,
+    // no address), both in localStorage. Nothing else of ours stores the address anywhere. The
+    // address staying in wagmi's own key is accepted (wallet-providers; ADR 0007), and this test
+    // pins it there: a second place, or a quote that copies it, fails.
+    const logged: string[] = [];
+    page.on('console', (m) => logged.push(m.text()));
+    page.on('pageerror', (e) => logged.push(e.message));
+    await ready(page);
+    await rateButton(page).click();
+    const dump = await page.evaluate(() => ({
+      local: { ...localStorage },
+      session: JSON.stringify({ ...sessionStorage }),
+      history: JSON.stringify(history.state),
+      historyLength: history.length,
+      url: location.href,
+      name: window.name,
+      referrer: document.referrer,
+      cookie: document.cookie,
+      links: [...document.querySelectorAll('[href],[src],[action]')].map(
+        (e) => e.getAttribute('href') ?? e.getAttribute('src') ?? e.getAttribute('action'),
+      ),
+    }));
+    const bare = WALLET.toLowerCase().slice(2);
+    const holds = (value: unknown) => JSON.stringify(value).toLowerCase().includes(bare);
+
+    expect(Object.keys(dump.local).sort()).toEqual(['wagmi.recentConnectorId', 'wagmi.store']);
+    expect(holds(dump.local['wagmi.recentConnectorId'])).toBe(false);
+    // The one allowed copy: exactly one account, in wagmi's own connection record.
+    const store = JSON.parse(dump.local['wagmi.store']!) as {
+      state: { connections: { value: [string, { accounts: string[] }][] } };
+    };
+    expect(store.state.connections.value).toHaveLength(1);
+    expect(store.state.connections.value[0]![1].accounts.map((a) => a.toLowerCase())).toEqual([
+      WALLET.toLowerCase(),
+    ]);
+
+    for (const [where, value] of Object.entries({
+      session: dump.session,
+      history: dump.history,
+      url: dump.url,
+      name: dump.name,
+      referrer: dump.referrer,
+      cookie: dump.cookie,
+      links: dump.links,
+      console: logged,
+    })) {
+      expect(holds(value), `the wallet address is in ${where}`).toBe(false);
+    }
+    // No navigation was made on the way (the history holds only the page itself).
+    expect(dump.historyLength).toBeLessThanOrEqual(2);
   });
 
   test('text from the answer is shown as text: a provider name that looks like markup', async ({
@@ -417,6 +475,7 @@ test.describe('tokens and pairs', () => {
     const details = main(page).getByRole('heading', { name: 'Rates and fees' }).locator('..');
     await expect(details).toContainText('Ranvier feeFree');
     await expect(details).toContainText('Wrapping and unwrapping is free.');
+    await expect(details).not.toContainText('These rates include the Ranvier fee');
     await expect(details).not.toContainText('Network cost');
     await expect(details).not.toContainText('signed into this quote');
     // Nothing runs out: a long wait asks nothing more.

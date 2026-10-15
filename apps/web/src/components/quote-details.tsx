@@ -114,6 +114,9 @@ export function QuoteDetails({ quote, pay, receive, sellAmount }: QuoteDetailsPr
             </dt>
             <dd className="m-0" />
           </dl>
+          {fee.amount === 0n ? null : (
+            <p className="m-0 mt-8 text-sub">{t('swap.details.rate.note')}</p>
+          )}
           <dl className="m-0 mt-12 grid grid-cols-[minmax(0,1fr)_auto] gap-x-12 gap-y-6 border-t border-line pt-12">
             <dt className="text-sub">{t('swap.details.fee')}</dt>
             <dd className="num m-0 text-right">{feeValue}</dd>

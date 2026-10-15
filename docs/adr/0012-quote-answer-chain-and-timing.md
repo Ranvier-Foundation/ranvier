@@ -1,6 +1,6 @@
 # ADR 0012: Quote answer echoes its chain and timing
 
-- Status: accepted
+- Status: accepted; the web enforces this (see "Web enforcement")
 - Date: 2026-10-15
 
 ## Context
@@ -120,10 +120,33 @@ The minimum is not raised. Reasons:
 - Raising the minimum would make a configuration that starts today refuse to start after an upgrade.
 - An expired quote costs nothing but a reverted transaction: the contract enforces the deadline.
 
-The trade-off: a very short lifetime (under about 30 s) leaves little time to review and confirm in a wallet, especially a hardware wallet, so quotes expire before people can sign. Production with the web app should use 30 s or more; the default stays 60 s. Until the web reads `ttlSeconds` (a separate web change), the deployed web assumes at least 60 s, so the API must not run below 60 s with it. Today that only affects the display: the web does not sign yet.
+The trade-off: a very short lifetime (under about 30 s) leaves little time to review and confirm in a wallet, especially a hardware wallet, so quotes expire before people can sign. Production with the web app should use 30 s or more; the default stays 60 s. The web reads `ttlSeconds` and follows any lifetime in the range (see "Web enforcement"), so the API has no minimum other than the 10 s the configuration allows; a short lifetime only means a shorter countdown.
 
 ## Consequences
 
-- The web can close the B1 and M1 gaps from ADR 0011 without guessing. That is a separate change; until then the new fields are ignored (the web parser ignores unknown fields).
+- The web closes the B1 and M1 gaps from ADR 0011 with these fields (see "Web enforcement"). A web build older than this change ignores them, and an API that stops sending them is refused by the current web build.
 - `buildSignedSwap` returns its `context` too. Callers that serialise its result must list fields, as the server does.
 - The deadline is still computed from the server clock, not from chain time. A server clock that drifts from block timestamps shortens or lengthens the real lifetime; keep the server on NTP.
+
+## Web enforcement
+
+Status: the web enforces this (`apps/web/src/lib/api/quote.ts`, `lib/swap/expiry.ts`, `lib/swap/use-quote.ts`; bounds in `lib/swap/config.ts`).
+
+**Parser.** The echo is required, and the whole answer is refused (shown as "Quote unavailable", nothing of it rendered) unless:
+
+- `sellChain` and `buyChain` equal the chain keys of the request, exactly (no case folding, no padding), and the request is a same-chain EVM request on a chain in the checked-in registry;
+- `chainId` is the numeric ID of that chain, derived from the registry key (`evm:<id>`) by the web, never from the answer. An answer for Base that says `chainId: 1` is refused, and so is `chainId` as text;
+- for a signed swap, `serverTime` and `ttlSeconds` are safe integers, `ttlSeconds` is within `QUOTE_TTL_MIN_SECONDS` to `QUOTE_TTL_MAX_SECONDS` (10 to 600, named once in `config.ts` beside the API's documented range), and `swap.quote.deadline == serverTime + ttlSeconds`, compared as `bigint`;
+- a direct wrap needs the chain echo only; a wrap that carries `serverTime` or `ttlSeconds` is refused (they have no meaning without a signature). Unknown other fields are still ignored, as before, and every signing and transaction field is still dropped at parse time.
+
+**Countdown.** A quote is shown for `min(ttlSeconds, 60 s cap) - 1 s`, counted from the moment the request was sent, on the monotonic clock. The cap is the web's own choice (`QUOTE_LIFETIME_CAP_MS`); a longer API lifetime only means an earlier refresh. The one second is the API's whole-second clock: it writes `deadline = floor(its clock) + ttl` after the request was sent, so `sent + ttl` can be up to 1 s after the signed deadline, and `sent + ttl - 1 s` cannot. (The earlier wording here, "never longer than the server meant", was true up to that second.) An answer that took as long as the lifetime is not shown: it is replaced like an expired quote, and counts toward the three automatic replacements, so a slow API cannot make a loop.
+
+**Does the countdown use the server's remaining time?** No. It uses only the monotonic clock from the send, and the existing wall-clock guard (the lesser of the two readings: a clock set back, a clock set forward and a device that slept cannot lengthen a quote). Reasons:
+
+- The server's remaining time is `serverTime + ttl - serverNow`, and the client knows `serverNow` only through its own wall clock and a skew estimated from one answer. That estimate is uncertain by the round trip plus the 1 s the server floored away, in the direction that can overstate the time left. The send-anchored monotonic count has no such uncertainty: the server read its clock after the send.
+- A server-derived remaining time could only be used safely as another `min`. It would then change the result only when the estimate is below the monotonic count, which is exactly when the estimate is wrong or the clocks disagree, and that case is reported as an error instead (below). So it adds a second way to be wrong and no safety.
+- Showing an expired quote as valid, or a loop against the API, needs the countdown to run longer than the quote or to refetch without a bound. Neither can happen here: the end is fixed on the monotonic clock at arrival, and replacements are capped.
+
+**Clock disagreement.** On arrival the web checks `serverTime` against the device's wall clock, using the interval the server's reading must lie in (the device clock at the send, to the device clock at the arrival, with `serverTime` floored to seconds), so a slow answer is never mistaken for skew. If even the nearest possible skew is beyond `CLOCK_SKEW_TOLERANCE_MS` (30 s), in either direction, the screen shows "Check your clock", shows no quote and asks nothing again by itself. This replaces ADR 0011's rule (a deadline already past on the device clock), which only caught a device that ran ahead, and only by more than the lifetime. It is symmetric because a server clock that is far from real time produces a signed deadline that is dead or long-lived on chain, and the person cannot tell which clock is wrong; the copy says the device clock looks wrong. Trade-off: a device off by more than 30 s cannot get a quote until it is fixed, though the countdown would still have been right. The tolerance is one constant.
+
+A direct wrap has no lifetime and is never replaced.
