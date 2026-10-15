@@ -10,6 +10,7 @@ const chain: ApiChain = {
   family: 'evm',
   nativeSymbol: 'ETH',
   balances: true,
+  quoting: true,
 };
 const row = (token: Partial<ApiToken>): PickerRow => ({
   key: 'k',

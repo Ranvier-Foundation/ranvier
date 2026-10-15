@@ -35,9 +35,16 @@ const token = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('parseChains', () => {
-  it('keeps only what the picker uses', () => {
+  it('keeps only what the app uses', () => {
     expect(parseChains([chain()])).toEqual([
-      { key: 'evm:8453', name: 'Base', family: 'evm', nativeSymbol: 'ETH', balances: true },
+      {
+        key: 'evm:8453',
+        name: 'Base',
+        family: 'evm',
+        nativeSymbol: 'ETH',
+        balances: true,
+        quoting: true,
+      },
     ]);
   });
   it.each([

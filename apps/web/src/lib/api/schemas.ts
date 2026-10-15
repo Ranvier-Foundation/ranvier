@@ -17,16 +17,16 @@ export class SchemaError extends Error {
   }
 }
 
-type Json = Record<string, unknown>;
+export type Json = Record<string, unknown>;
 
-function record(value: unknown, path: string): Json {
+export function record(value: unknown, path: string): Json {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new SchemaError(path);
   }
   return value as Json;
 }
 
-function list(value: unknown, path: string, max: number): unknown[] {
+export function list(value: unknown, path: string, max: number): unknown[] {
   if (!Array.isArray(value) || value.length > max) throw new SchemaError(path);
   return value;
 }
@@ -38,7 +38,7 @@ function list(value: unknown, path: string, max: number): unknown[] {
 const UNSAFE_TEXT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 /** Display text: a non-empty string of at most `max` characters with no unsafe characters. */
-function text(value: unknown, path: string, max: number): string {
+export function text(value: unknown, path: string, max: number): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > max) {
     throw new SchemaError(path);
   }
@@ -117,7 +117,7 @@ function bool(value: unknown, path: string): boolean {
   return value;
 }
 
-function int(value: unknown, path: string, min: number, max: number): number {
+export function int(value: unknown, path: string, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
     throw new SchemaError(path);
   }
@@ -147,7 +147,7 @@ function tokenAddress(value: unknown, path: string): string {
   return value;
 }
 
-/** What the picker reads of `GET /v1/chains`. Explorer URLs are not read: nothing links to them. */
+/** What the app reads of `GET /v1/chains`. Explorer URLs are not read: nothing links to them. */
 export interface ApiChain {
   key: ChainKey;
   name: string;
@@ -155,6 +155,8 @@ export interface ApiChain {
   nativeSymbol: string;
   /** True when the API can read balances on this chain right now (ADR 0009). */
   balances: boolean;
+  /** True when the API can quote swaps on this chain right now (routing configured, ADR 0006). */
+  quoting: boolean;
 }
 
 export const MAX_CHAINS = 64;
@@ -169,15 +171,15 @@ export function parseChains(json: unknown): ApiChain[] {
     seen.add(key);
     const family = o['family'];
     if (family !== 'evm' && family !== 'solana') throw new SchemaError(`[${i}].family`);
-    // Read for type only: they are part of the contract, but the picker does not use them.
+    // Read for type only: part of the contract, but nothing uses it.
     int(o['nativeDecimals'], `[${i}].nativeDecimals`, 0, 36);
-    bool(o['quoting'], `[${i}].quoting`);
     return {
       key,
       name: text(o['name'], `[${i}].name`, 32),
       family,
       nativeSymbol: text(o['nativeSymbol'], `[${i}].nativeSymbol`, 16),
       balances: bool(o['balances'], `[${i}].balances`),
+      quoting: bool(o['quoting'], `[${i}].quoting`),
     };
   });
 }

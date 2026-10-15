@@ -17,6 +17,7 @@ const base: ApiChain = {
   family: 'evm',
   nativeSymbol: 'ETH',
   balances: true,
+  quoting: true,
 };
 const eth: ApiChain = {
   key: 'evm:1',
@@ -24,6 +25,7 @@ const eth: ApiChain = {
   family: 'evm',
   nativeSymbol: 'ETH',
   balances: true,
+  quoting: true,
 };
 const tok = (
   chain: ApiChain,

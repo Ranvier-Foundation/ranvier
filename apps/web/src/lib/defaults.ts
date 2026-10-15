@@ -6,24 +6,25 @@ export interface DefaultSide {
   symbol: string;
 }
 
-function chainOrThrow(key: 'evm:1' | 'evm:8453'): ChainConfig {
+function chainOrThrow(key: 'evm:1'): ChainConfig {
   const chain = getChain(key);
   if (!chain) throw new Error(`Chain ${key} is missing from the registry`);
   return chain;
 }
 
 /**
- * Signed-out default pair: the native coin on Ethereum to the first listed stablecoin on Base.
- * Chains and symbols come from @ranvier/chains. No amounts: fields start empty.
+ * Default pair: the native coin on Ethereum to the first listed stablecoin on Ethereum. Chains and
+ * symbols come from @ranvier/chains. No amounts: fields start empty. Both sides are on one chain
+ * because the API routes one chain at a time (ADR 0004); the canvas draws a cross-chain pair
+ * (see Deviations in docs/ui-guidelines.md).
  */
 export function defaultPair(): { pay: DefaultSide; receive: DefaultSide } {
   const ethereum = chainOrThrow('evm:1');
-  const base = chainOrThrow('evm:8453');
-  const stable = Object.keys(base.stablecoins)[0];
-  if (!stable) throw new Error('Base lists no stablecoin');
+  const stable = Object.keys(ethereum.stablecoins)[0];
+  if (!stable) throw new Error('Ethereum lists no stablecoin');
   return {
     pay: { chain: ethereum, symbol: ethereum.nativeSymbol },
-    receive: { chain: base, symbol: stable },
+    receive: { chain: ethereum, symbol: stable },
   };
 }
 
