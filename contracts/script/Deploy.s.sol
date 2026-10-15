@@ -33,6 +33,12 @@ contract Deploy is Script {
     error PublishedDevAddress(string role, address account);
     error InitialRoutersRefused(uint256 chainId);
     error DuplicateInitialRouter(address router);
+    error RouterIsRole(string role, address router);
+    error NoCreate2Factory();
+    error AlreadyDeployed(address wrapper);
+    error Create2DeployFailed(address expected);
+    error UnexpectedCreate2Address(address expected, bytes returned);
+    error RouterNotAllowed(address router);
 
     function run() external virtual returns (FeeWrapper wrapper) {
         Config memory c = _rolesFromEnv();
@@ -65,11 +71,25 @@ contract Deploy is Script {
         c.guardian = vm.envAddress("GUARDIAN_ADDRESS");
     }
 
+    /// @dev The wrapper is created by an explicit CALL to the CREATE2 factory, never `new FeeWrapper{salt: ...}`:
+    ///      in OP-stack network mode (chains 10, 8453, 84532 and their RPCs) forge broadcasts a salted `new`
+    ///      as a plain CREATE at the deployer's nonce address while the simulation and the log show the
+    ///      CREATE2 address. A CALL is broadcast as written, so the address is the same on every chain.
     function _deploy(Config memory c) internal returns (FeeWrapper wrapper) {
         checkRoles(block.chainid, c);
 
+        bytes memory init =
+            abi.encodePacked(type(FeeWrapper).creationCode, abi.encode(c.owner, c.collector, c.signer, c.guardian));
+        address expected = vm.computeCreate2Address(c.salt, keccak256(init), CREATE2_FACTORY);
+        if (CREATE2_FACTORY.code.length == 0) revert NoCreate2Factory();
+        if (expected.code.length != 0) revert AlreadyDeployed(expected);
+
         vm.startBroadcast();
-        wrapper = new FeeWrapper{salt: c.salt}(c.owner, c.collector, c.signer, c.guardian);
+        (bool ok, bytes memory ret) = CREATE2_FACTORY.call(abi.encodePacked(c.salt, init));
+        if (!ok) revert Create2DeployFailed(expected);
+        if (ret.length != 20 || address(bytes20(ret)) != expected) revert UnexpectedCreate2Address(expected, ret);
+        if (expected.code.length == 0) revert Create2DeployFailed(expected);
+        wrapper = FeeWrapper(payable(expected));
         if (c.routers.length > 0) {
             require(msg.sender == c.owner, "INITIAL_ROUTERS needs the deployer to be the owner");
             for (uint256 i = 0; i < c.routers.length; i++) {
@@ -77,6 +97,9 @@ contract Deploy is Script {
             }
         }
         vm.stopBroadcast();
+        for (uint256 i = 0; i < c.routers.length; i++) {
+            if (!wrapper.isRouterAllowed(c.routers[i])) revert RouterNotAllowed(c.routers[i]);
+        }
 
         console.log("FeeWrapper", address(wrapper));
         console.log("chainId", block.chainid);
@@ -86,12 +109,19 @@ contract Deploy is Script {
     }
 
     /// @notice Reverts when the configuration must not be deployed on `chainId`. On 31337 only
-    ///         duplicate routers are refused; everything else is allowed there (the harness).
+    ///         duplicate routers and a router that also holds a role are refused; everything else is
+    ///         allowed there (the harness).
     function checkRoles(uint256 chainId, Config memory c) public pure {
         for (uint256 i = 0; i < c.routers.length; i++) {
             for (uint256 j = 0; j < i; j++) {
                 if (c.routers[i] == c.routers[j]) revert DuplicateInitialRouter(c.routers[i]);
             }
+        }
+        for (uint256 i = 0; i < c.routers.length; i++) {
+            _refuseRouterAsRole("ADMIN_ADDRESS", c.owner, c.routers[i]);
+            _refuseRouterAsRole("GUARDIAN_ADDRESS", c.guardian, c.routers[i]);
+            _refuseRouterAsRole("FEE_COLLECTOR", c.collector, c.routers[i]);
+            _refuseRouterAsRole("FEE_SIGNER", c.signer, c.routers[i]);
         }
         if (chainId == LOCAL_CHAIN_ID) return;
         if (c.routers.length > 0 && !initialRoutersAllowed(chainId)) revert InitialRoutersRefused(chainId);
@@ -115,6 +145,10 @@ contract Deploy is Script {
             || chainId == LOCAL_CHAIN_ID; // Anvil / Hardhat
     }
 
+    function _refuseRouterAsRole(string memory role, address holder, address router) private pure {
+        if (router == holder) revert RouterIsRole(role, router);
+    }
+
     function _refusePublished(string memory role, address account) private pure {
         if (isPublishedDevAddress(account)) revert PublishedDevAddress(role, account);
     }
@@ -124,13 +158,14 @@ contract Deploy is Script {
     ///           and P256VERIFY at 0x0100, and room for future ones);
     ///         - anvil's CREATE2 factory (`CREATE2_FACTORY` from forge-std, 0x4e59...956C);
     ///         - forge's default sender (`DEFAULT_SENDER`, 0x1804...1f38) and the address forge
-    ///           deploys a test contract at (its first CREATE, 0x7FA9...1496);
+    ///           deploys a test contract at (its first CREATE, 0x7FA9...1496), and forge-std's
+    ///           `DEFAULT_TEST_CONTRACT` (0x5615...b72f);
     ///         - the burn addresses 0x...dEaD and 0xdEAD...2069;
     ///         - the first 30 accounts of the published `test test ... junk` mnemonic (addresses
     ///           only; their keys are public).
     function isPublishedDevAddress(address a) public pure returns (bool) {
         if (uint160(a) <= 0x1ff || a == CREATE2_FACTORY) return true;
-        if (a == DEFAULT_SENDER || a == FORGE_TEST_CONTRACT) return true;
+        if (a == DEFAULT_SENDER || a == FORGE_TEST_CONTRACT || a == DEFAULT_TEST_CONTRACT) return true;
         if (a == 0x000000000000000000000000000000000000dEaD || a == 0xdEAD000000000000000042069420694206942069) {
             return true;
         }

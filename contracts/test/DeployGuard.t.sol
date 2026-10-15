@@ -20,6 +20,17 @@ contract DeployExposed is Deploy {
     function routersFromEnv(string memory name) external view returns (address[] memory) {
         return _routersFromEnv(name);
     }
+
+    function deploy(Config memory c) external returns (FeeWrapper) {
+        return _deploy(c);
+    }
+}
+
+/// @dev Calls `Deploy._deploy` from the broadcaster's own address (see ScriptCaller).
+contract DeployCaller {
+    function deploy(DeployExposed script, Deploy.Config memory c) external returns (FeeWrapper) {
+        return script.deploy(c);
+    }
 }
 
 /// @notice Deploy.s.sol role guard (ADR 0013, section 8): off chain 31337, no published development
@@ -245,6 +256,134 @@ contract DeployGuardTest is Test {
         _expectRefusedEverywhere(0xdEAD000000000000000042069420694206942069);
     }
 
+    /// forge-std's DEFAULT_TEST_CONTRACT, refused in every role and as a router.
+    function test_refuses_forgeStdDefaultTestContract() public {
+        address a = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
+        assertEq(DEFAULT_TEST_CONTRACT, a);
+        assertEq(a, vm.computeCreateAddress(vm.computeCreateAddress(DEFAULT_SENDER, 1), 1));
+        _expectRefusedEverywhere(a);
+        Deploy.Config memory c = _prodShaped();
+        c.owner = a;
+        _expectPublished(BASE_SEPOLIA, c, "ADMIN_ADDRESS", a);
+        c = _prodShaped();
+        c.guardian = a;
+        _expectPublished(BASE_SEPOLIA, c, "GUARDIAN_ADDRESS", a);
+        c = _prodShaped();
+        c.collector = a;
+        _expectPublished(BASE_SEPOLIA, c, "FEE_COLLECTOR", a);
+    }
+
+    // ------------------------------------------------------------ a router must not hold a role
+
+    function _expectRouterIsRole(Deploy.Config memory c, string memory role, address router) internal {
+        c.routers = new address[](2);
+        c.routers[0] = ZEROX_ALLOWANCE_HOLDER;
+        c.routers[1] = router;
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RouterIsRole.selector, role, router));
+        script.checkRoles(BASE_SEPOLIA, c);
+        // On every chain, the local one included.
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RouterIsRole.selector, role, router));
+        script.checkRoles(31337, c);
+    }
+
+    function test_refuses_routerIsOwner() public {
+        Deploy.Config memory c = _prodShaped();
+        _expectRouterIsRole(c, "ADMIN_ADDRESS", c.owner);
+    }
+
+    function test_refuses_routerIsGuardian() public {
+        Deploy.Config memory c = _prodShaped();
+        _expectRouterIsRole(c, "GUARDIAN_ADDRESS", c.guardian);
+    }
+
+    function test_refuses_routerIsCollector() public {
+        Deploy.Config memory c = _prodShaped();
+        _expectRouterIsRole(c, "FEE_COLLECTOR", c.collector);
+    }
+
+    function test_refuses_routerIsSigner() public {
+        Deploy.Config memory c = _prodShaped();
+        _expectRouterIsRole(c, "FEE_SIGNER", c.signer);
+    }
+
+    // ------------------------------------------------------------ the CREATE2 factory deploy
+
+    function _testnetDeploy(bytes32 salt) internal returns (Deploy.Config memory c, DeployCaller caller) {
+        (address deployer, uint256 deployerKey) = makeAddrAndKey("testnetDeployer");
+        vm.rememberKey(deployerKey);
+        deployCodeTo("DeployGuard.t.sol:DeployCaller", deployer);
+        caller = DeployCaller(deployer);
+        vm.chainId(BASE_SEPOLIA);
+        c = _prodShaped();
+        c.salt = salt;
+        c.owner = deployer;
+        c.routers = new address[](2);
+        c.routers[0] = ZEROX_ALLOWANCE_HOLDER;
+        c.routers[1] = makeAddr("otherRouter");
+    }
+
+    function _expected(Deploy.Config memory c) internal pure returns (address) {
+        bytes memory init =
+            abi.encodePacked(type(FeeWrapper).creationCode, abi.encode(c.owner, c.collector, c.signer, c.guardian));
+        return vm.computeCreate2Address(c.salt, keccak256(init), CREATE2_FACTORY);
+    }
+
+    function test_deploy_landsAtCreate2Address_withRoutersThere() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("factory salt"));
+        address expected = _expected(c);
+        FeeWrapper w = caller.deploy(exposed, c);
+        assertEq(address(w), expected);
+        assertGt(expected.code.length, 0);
+        assertEq(w.owner(), c.owner);
+        assertTrue(w.isRouterAllowed(ZEROX_ALLOWANCE_HOLDER));
+        assertTrue(w.isRouterAllowed(c.routers[1]));
+    }
+
+    function test_deploy_refuses_noFactoryCode() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("no factory"));
+        vm.etch(CREATE2_FACTORY, "");
+        vm.expectRevert(Deploy.NoCreate2Factory.selector);
+        caller.deploy(exposed, c);
+    }
+
+    function test_deploy_refuses_factoryCallFails() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("factory reverts"));
+        vm.mockCallRevert(CREATE2_FACTORY, bytes(""), bytes("boom"));
+        vm.expectRevert(abi.encodeWithSelector(Deploy.Create2DeployFailed.selector, _expected(c)));
+        caller.deploy(exposed, c);
+    }
+
+    function test_deploy_refuses_otherReturnedAddress() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("other address"));
+        bytes memory other = abi.encodePacked(makeAddr("elsewhere"));
+        vm.mockCall(CREATE2_FACTORY, bytes(""), other);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.UnexpectedCreate2Address.selector, _expected(c), other));
+        caller.deploy(exposed, c);
+    }
+
+    function test_deploy_refuses_returnedAddressWithoutCode() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("no code"));
+        vm.mockCall(CREATE2_FACTORY, bytes(""), abi.encodePacked(_expected(c)));
+        vm.expectRevert(abi.encodeWithSelector(Deploy.Create2DeployFailed.selector, _expected(c)));
+        caller.deploy(exposed, c);
+    }
+
+    function test_deploy_refuses_secondRunWithSameSalt() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("twice"));
+        caller.deploy(exposed, c);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.AlreadyDeployed.selector, _expected(c)));
+        caller.deploy(exposed, c);
+    }
+
+    function test_deploy_refuses_routerNotAllowedAfterwards() public {
+        (Deploy.Config memory c, DeployCaller caller) = _testnetDeploy(keccak256("router dropped"));
+        // setRouter "succeeds" without effect, as it did on the empty logged address.
+        vm.mockCall(_expected(c), abi.encodeWithSelector(FeeWrapper.setRouter.selector), bytes(""));
+        vm.etch(_expected(c), ""); // mockCall puts a placeholder byte there; the address must start empty
+        vm.expectRevert(abi.encodeWithSelector(Deploy.RouterNotAllowed.selector, ZEROX_ALLOWANCE_HOLDER));
+        caller.deploy(exposed, c);
+    }
+
     // ------------------------------------------------------------ INITIAL_ROUTERS: where it may be set
 
     function test_refuses_initialRouters_onEveryNeverLocalChain() public {
@@ -305,6 +444,13 @@ contract DeployGuardTest is Test {
         // Not refused on a mainnet either: an empty value means "no routers" everywhere.
         vm.chainId(8453);
         assertEq(exposed.routersFromEnv("DG_EMPTY").length, 0);
+    }
+
+    function test_parse_whitespaceOnly_spacesTabsNewlines() public {
+        vm.setEnv("DG_WS_ONLY", " \t \n\r\n\t  ");
+        assertEq(exposed.routersFromEnv("DG_WS_ONLY").length, 0);
+        vm.chainId(8453);
+        assertEq(exposed.routersFromEnv("DG_WS_ONLY").length, 0);
     }
 
     function test_parse_trimsWhitespace() public {
