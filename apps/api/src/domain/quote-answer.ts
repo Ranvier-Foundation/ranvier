@@ -53,7 +53,13 @@ export function signedAnswerEcho(
   }
   if (swap.quote.deadline !== signedDeadline(timing)) throw new QuoteEchoMismatchError('deadline');
   const { sellChain, buyChain, chainId } = swap.context;
-  return { sellChain, buyChain, chainId, serverTime: timing.serverTime, ttlSeconds: timing.ttlSeconds };
+  return {
+    sellChain,
+    buyChain,
+    chainId,
+    serverTime: timing.serverTime,
+    ttlSeconds: timing.ttlSeconds,
+  };
 }
 
 /**

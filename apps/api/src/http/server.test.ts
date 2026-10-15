@@ -272,6 +272,15 @@ describe('http', () => {
       value: '1000000000000000000',
     });
     expect(swap.signature).toMatch(/^0x[0-9a-f]{130}$/);
+    // Chain and timing echo (ADR 0012); the signing context is not serialised inside `swap`.
+    expect(res.json()).toMatchObject({
+      sellChain: 'evm:84532',
+      buyChain: 'evm:84532',
+      chainId: 84532,
+      serverTime: 1_800_000_000,
+      ttlSeconds: 60,
+    });
+    expect(Object.keys(swap).sort()).toEqual(['quote', 'signature', 'transaction']);
   });
 
   it('uses a random nonce and the current time by default', async () => {
@@ -283,6 +292,8 @@ describe('http', () => {
     const b = (await app.inject({ method: 'POST', url: '/v1/quotes', payload: body })).json();
     expect(a.swap.quote.nonce).not.toBe(b.swap.quote.nonce);
     expect(Number(a.swap.quote.deadline)).toBeGreaterThan(Date.now() / 1000);
+    expect(a.serverTime).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    expect(BigInt(a.swap.quote.deadline)).toBe(BigInt(a.serverTime) + 60n);
   });
 
   it('refuses to sign for a chain the signer refuses (mainnet with a local key)', async () => {
@@ -790,6 +801,9 @@ describe('http', () => {
           buyAmount: '1000000000000000000',
           minBuyAmount: '1000000000000000000',
         },
+        sellChain: 'evm:1',
+        buyChain: 'evm:1',
+        chainId: 1,
       });
     });
 
@@ -813,6 +827,9 @@ describe('http', () => {
           buyAmount: '1000000000000000000',
           minBuyAmount: '1000000000000000000',
         },
+        sellChain: 'evm:1',
+        buyChain: 'evm:1',
+        chainId: 1,
       });
     });
 
@@ -849,5 +866,141 @@ describe('http', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+  });
+
+  describe('the answer echoes its chain and timing (ADR 0012)', () => {
+    const kmsSigning = async (overrides: { ttlSeconds?: number; now?: () => number } = {}) => ({
+      ...SIGNING,
+      ...overrides,
+      signer: await KmsSigner.create({
+        keyId: FAKE_ALIAS,
+        transport: new FakeKms({ privateKey: padHex('0xa11ce', { size: 32 }) }),
+        chainIds: [1, 8453],
+      }),
+    });
+    // Same token addresses on both chains (native is the zero address everywhere): only the
+    // echoed chain tells the two answers apart.
+    const bodyOn = (chain: string) => ({
+      ...quoteBody,
+      sellToken: { chain, address: 'native' },
+      buyToken: { chain, address: USDC_ADDRESS },
+    });
+    const recover = (swap: { quote: Record<string, string>; signature: Hex }, chainId: number) =>
+      recoverTypedDataAddress({
+        ...typedData(
+          {
+            ...swap.quote,
+            amountIn: BigInt(swap.quote['amountIn'] as string),
+            minAmountOut: BigInt(swap.quote['minAmountOut'] as string),
+            feeAmount: BigInt(swap.quote['feeAmount'] as string),
+            nonce: BigInt(swap.quote['nonce'] as string),
+            deadline: BigInt(swap.quote['deadline'] as string),
+          } as unknown as Parameters<typeof typedData>[0],
+          chainId,
+          SIGNING.feeWrapper,
+        ),
+        signature: swap.signature,
+      } as Parameters<typeof recoverTypedDataAddress>[0]);
+
+    it('echoes the signing chain on each chain, and the signature verifies only there', async () => {
+      const signing = await kmsSigning();
+      const answers = [];
+      for (const [chain, chainId, other] of [
+        ['evm:1', 1, 8453],
+        ['evm:8453', 8453, 1],
+      ] as const) {
+        const res = await post(deps({ signing }), bodyOn(chain));
+        expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(body).toMatchObject({ sellChain: chain, buyChain: chain, chainId });
+        expect(await recover(body.swap, body.chainId)).toBe(signing.signer.address);
+        expect(await recover(body.swap, other)).not.toBe(signing.signer.address);
+        answers.push(body);
+      }
+      // Every echo the web checks today is identical across the two chains; the chain is not.
+      const [a, b] = answers;
+      for (const field of ['user', 'tokenIn', 'tokenOut', 'amountIn', 'feeAmount', 'deadline']) {
+        expect(a.swap.quote[field]).toBe(b.swap.quote[field]);
+      }
+      expect(a.chainId).not.toBe(b.chainId);
+    });
+
+    it('sends exactly the documented top-level fields, nothing from the provider', async () => {
+      const res = await post(deps({ signing: await kmsSigning() }), bodyOn('evm:1'));
+      const body = res.json();
+      expect(Object.keys(body).sort()).toEqual([
+        'best',
+        'buyChain',
+        'chainId',
+        'failures',
+        'fee',
+        'quotes',
+        'sellChain',
+        'serverTime',
+        'swap',
+        'ttlSeconds',
+      ]);
+      expect(typeof body.chainId).toBe('number');
+      expect(typeof body.serverTime).toBe('number');
+      expect(typeof body.ttlSeconds).toBe('number');
+    });
+
+    it.each([10, 60, 600])(
+      'echoes serverTime and ttlSeconds=%i with deadline = serverTime + ttlSeconds',
+      async (ttlSeconds) => {
+        const now = () => 1_800_000_000_999; // floored to whole seconds, like the deadline
+        const res = await post(
+          deps({ signing: await kmsSigning({ ttlSeconds, now }) }),
+          bodyOn('evm:8453'),
+        );
+        const body = res.json();
+        expect(body.serverTime).toBe(1_800_000_000);
+        expect(body.ttlSeconds).toBe(ttlSeconds);
+        expect(body.swap.quote.deadline).toBe(String(1_800_000_000 + ttlSeconds));
+      },
+    );
+
+    it('fails closed (500, nothing signed sent) when the clock reading cannot be signed', async () => {
+      const res = await post(
+        deps({ signing: await kmsSigning({ now: () => 0 }) }),
+        bodyOn('evm:1'),
+      );
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'internal_error' });
+    });
+
+    it('adds no chain or timing fields to an unsigned answer', async () => {
+      const body = (await post(deps(), quoteBody)).json();
+      expect(Object.keys(body).sort()).toEqual(['best', 'failures', 'fee', 'quotes']);
+    });
+
+    it.each([
+      ['evm:1', 1, ETH, WETH],
+      ['evm:8453', 8453, { chain: 'evm:8453', address: 'native' }, BASE_WETH],
+    ] as const)(
+      'echoes the chain of a direct wrap on %s, without timing',
+      async (chain, chainId, sell, buy) => {
+        const res = await post(deps({ signing: SIGNING }), {
+          ...quoteBody,
+          sellToken: sell,
+          buyToken: buy,
+        });
+        expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(body).toMatchObject({
+          sellChain: chain,
+          buyChain: chain,
+          chainId,
+          direct: { kind: 'wrap' },
+        });
+        expect(Object.keys(body).sort()).toEqual([
+          'buyChain',
+          'chainId',
+          'direct',
+          'fee',
+          'sellChain',
+        ]);
+      },
+    );
   });
 });
