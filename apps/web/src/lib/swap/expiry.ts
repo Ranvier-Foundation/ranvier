@@ -1,4 +1,4 @@
-import { QUOTE_CLOCK_TOLERANCE_MS, QUOTE_LIFETIME_CAP_MS } from './config';
+import { QUOTE_LIFETIME_CAP_MS } from './config';
 
 /**
  * Quote expiry (ADR 0011). The API sends one absolute deadline in unix seconds, written with the
@@ -60,15 +60,18 @@ export function expiryFromDeadline(
   return { ok: true, expiry: { atMono, receivedWall, lifetimeMs: atMono - receivedMono } };
 }
 
-/** Whole milliseconds left, never below 0. Expired as soon as *either* clock says so. */
+/**
+ * Whole milliseconds left, never below 0: the less of two readings.
+ * - The monotonic clock: `atMono - now`. It never jumps, but it can pause while a device sleeps.
+ * - The wall clock: the lifetime minus the wall time since arrival. It sees a sleep, but a person
+ *   or NTP can set it. Set backwards it shows more time than the monotonic reading, which is then
+ *   the smaller one and wins; set forwards it shows less, which only expires the quote early.
+ * So neither a clock set back nor a device that slept can make a quote look longer-lived than it is.
+ */
 export function msLeft(expiry: Expiry, clock: Clock): number {
   const monoLeft = expiry.atMono - clock.mono();
-  // Tripwire: the monotonic clock can pause while a device sleeps. If the wall clock says far more
-  // time went by than the quote was given, it is expired. A wall clock set backwards never
-  // extends a quote; one set forwards only expires it early.
-  const wallElapsed = clock.wall() - expiry.receivedWall;
-  if (wallElapsed > expiry.lifetimeMs + QUOTE_CLOCK_TOLERANCE_MS) return 0;
-  return Math.max(0, Math.ceil(monoLeft));
+  const wallLeft = expiry.lifetimeMs - (clock.wall() - expiry.receivedWall);
+  return Math.max(0, Math.ceil(Math.min(monoLeft, wallLeft)));
 }
 
 /** Seconds to show: rounded up, so "0" is only shown once it is over. */

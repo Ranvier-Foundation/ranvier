@@ -28,6 +28,8 @@ export interface SwapPanelView {
   amountDescribedBy?: string;
   /** What the receive row shows: the quoted amount, or the placeholder. */
   receiveText: string;
+  /** `receiveText` is a quoted amount (shown in `ink`, as the canvas does), not the placeholder. */
+  receiveQuoted?: boolean;
   /** A quote is being fetched: the receive amount is a placeholder block, not a number. */
   receiveBusy?: boolean;
   /** USD value texts. `null` hides the value (it is not known). */
@@ -157,8 +159,8 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
             <SlippageIcon />
           </Link>
         </div>
-        <div className="mt-30 flex items-baseline justify-between gap-16 whitespace-nowrap">
-          <div className="flex min-w-0 items-baseline gap-10">
+        <div className="mt-30 flex flex-wrap items-baseline justify-between gap-x-16 gap-y-4">
+          <div className="flex max-w-full min-w-0 items-baseline gap-10 whitespace-nowrap">
             <input
               id="pay"
               inputMode="decimal"
@@ -182,7 +184,7 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
             <button
               type="button"
               aria-label={t('swap.pay.usd.label')}
-              className="num shrink-0 border-none bg-transparent p-0 text-body text-accent transition hover:opacity-70"
+              className="num ml-auto shrink-0 border-none bg-transparent p-0 text-body text-accent transition hover:opacity-70"
             >
               {view.payUsd}
             </button>
@@ -206,15 +208,15 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
 
       <div className="px-24 pt-32 pb-26">
         <RowHeading htmlFor="receive" side="receive" view={view} />
-        <div className="mt-30 flex items-baseline justify-between gap-16 whitespace-nowrap">
-          <div className="flex min-w-0 items-baseline gap-10">
+        <div className="mt-30 flex flex-wrap items-baseline justify-between gap-x-16 gap-y-4">
+          <div className="flex max-w-full min-w-0 items-baseline gap-10 whitespace-nowrap">
             {/* An <output> is a live region by default; the quote is announced once, by the status line, not on every change. */}
             <output
               id="receive"
               htmlFor="pay"
               aria-live="off"
               aria-busy={view.receiveBusy === true}
-              className={`${AMOUNT} text-sub`}
+              className={`${AMOUNT} min-w-0 truncate ${view.receiveQuoted ? 'text-ink' : 'text-sub'}`}
             >
               {view.receiveBusy ? (
                 <>
@@ -231,7 +233,7 @@ export function SwapPanel({ view = staticView() }: { view?: SwapPanelView }) {
             <TokenName side="receive" view={view} />
           </div>
           {view.receiveUsd === null ? null : (
-            <span className="num shrink-0 text-body text-sub">{view.receiveUsd}</span>
+            <span className="num ml-auto shrink-0 text-body text-sub">{view.receiveUsd}</span>
           )}
         </div>
       </div>

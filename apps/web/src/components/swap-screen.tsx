@@ -38,6 +38,7 @@ function panelView(form: SwapForm, quote: QuoteState, onPick: (s: Side) => void)
     onAmountChange: form.setAmount,
     receiveText:
       ready && receive ? formatSwapAmount(ready.buyAmount, receive) : t('swap.amount.placeholder'),
+    receiveQuoted: ready !== undefined,
     receiveBusy: form.cta.kind === 'fetching',
     // The quote API sends no USD value for what is sold, so none is shown once an amount is
     // typed; 0 is exact.

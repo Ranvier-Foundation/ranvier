@@ -16,12 +16,6 @@ export const QUOTE_DEBOUNCE_MS = 400;
 export const QUOTE_LIFETIME_CAP_MS = 60_000;
 
 /**
- * Slack allowed between the wall clock and the monotonic clock before the quote is treated as
- * expired (a device that slept, or a clock that was set forward while the quote was on screen).
- */
-export const QUOTE_CLOCK_TOLERANCE_MS = 2_000;
-
-/**
  * How many times in a row an expired quote is replaced without the person touching anything. After
  * this the screen waits for them (each quote can cost a paid upstream call). Touching the amount,
  * a token or the wallet, pressing the refresh button, or coming back to the tab starts the count over.
