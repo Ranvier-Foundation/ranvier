@@ -12,6 +12,7 @@ import {
   deferred,
   type ApiRequest,
   type MockApi,
+  type QuoteSettings,
 } from './api-mock';
 import { afterRender, box, hydrated, RGB, styles } from './helpers';
 import {
@@ -118,6 +119,8 @@ test.describe('a quote is shown for a typed amount', () => {
       'The lowest amount this quote allows, not the amount to expect.',
     );
     await expect(details).toContainText('1 USDC = 0.0004008 ETH');
+    // The rates are what you pay against what you receive, so they include the fee.
+    await expect(details).toContainText('These rates include the Ranvier fee');
     expect(quotes(api)).toHaveLength(1);
   });
 });
@@ -195,6 +198,62 @@ test.describe('what is sent and what is kept', () => {
         ),
       ),
     ).not.toContain(expect.stringContaining('0x00000000000'));
+  });
+
+  test("the wallet address never reaches sessionStorage, the history, the URL, a cookie or the console (wagmi's own store is the one place)", async ({
+    page,
+  }) => {
+    // What wagmi keeps, checked on 2026-10: `wagmi.store` (the connection, which holds the
+    // connected account's address, so it can reconnect) and `wagmi.recentConnectorId` (a wallet id,
+    // no address), both in localStorage. Nothing else of ours stores the address anywhere. The
+    // address staying in wagmi's own key is accepted (wallet-providers; ADR 0007), and this test
+    // pins it there: a second place, or a quote that copies it, fails.
+    const logged: string[] = [];
+    page.on('console', (m) => logged.push(m.text()));
+    page.on('pageerror', (e) => logged.push(e.message));
+    await ready(page);
+    await rateButton(page).click();
+    const dump = await page.evaluate(() => ({
+      local: { ...localStorage },
+      session: JSON.stringify({ ...sessionStorage }),
+      history: JSON.stringify(history.state),
+      historyLength: history.length,
+      url: location.href,
+      name: window.name,
+      referrer: document.referrer,
+      cookie: document.cookie,
+      links: [...document.querySelectorAll('[href],[src],[action]')].map(
+        (e) => e.getAttribute('href') ?? e.getAttribute('src') ?? e.getAttribute('action'),
+      ),
+    }));
+    const bare = WALLET.toLowerCase().slice(2);
+    const holds = (value: unknown) => JSON.stringify(value).toLowerCase().includes(bare);
+
+    expect(Object.keys(dump.local).sort()).toEqual(['wagmi.recentConnectorId', 'wagmi.store']);
+    expect(holds(dump.local['wagmi.recentConnectorId'])).toBe(false);
+    // The one allowed copy: exactly one account, in wagmi's own connection record.
+    const store = JSON.parse(dump.local['wagmi.store']!) as {
+      state: { connections: { value: [string, { accounts: string[] }][] } };
+    };
+    expect(store.state.connections.value).toHaveLength(1);
+    expect(store.state.connections.value[0]![1].accounts.map((a) => a.toLowerCase())).toEqual([
+      WALLET.toLowerCase(),
+    ]);
+
+    for (const [where, value] of Object.entries({
+      session: dump.session,
+      history: dump.history,
+      url: dump.url,
+      name: dump.name,
+      referrer: dump.referrer,
+      cookie: dump.cookie,
+      links: dump.links,
+      console: logged,
+    })) {
+      expect(holds(value), `the wallet address is in ${where}`).toBe(false);
+    }
+    // No navigation was made on the way (the history holds only the page itself).
+    expect(dump.historyLength).toBeLessThanOrEqual(2);
   });
 
   test('text from the answer is shown as text: a provider name that looks like markup', async ({
@@ -416,6 +475,7 @@ test.describe('tokens and pairs', () => {
     const details = main(page).getByRole('heading', { name: 'Rates and fees' }).locator('..');
     await expect(details).toContainText('Ranvier feeFree');
     await expect(details).toContainText('Wrapping and unwrapping is free.');
+    await expect(details).not.toContainText('These rates include the Ranvier fee');
     await expect(details).not.toContainText('Network cost');
     await expect(details).not.toContainText('signed into this quote');
     // Nothing runs out: a long wait asks nothing more.
@@ -814,20 +874,119 @@ test.describe('late answers and changes mid-quote', () => {
   });
 });
 
+test.describe('the answer must be for the chain and time that were asked (ADR 0012)', () => {
+  test.beforeEach(async ({ page }) => openConnected(page));
+
+  /** Echo fields replaced by the test, or removed (`undefined`), and what is moved off by one. */
+  const swapCases: [string, Pick<QuoteSettings, 'echo' | 'deadlineOffsetSec'>][] = [
+    ['a sellChain of another chain', { echo: { sellChain: 'evm:8453' } }],
+    ['a buyChain of another chain', { echo: { buyChain: 'evm:8453' } }],
+    ['a chainId of another chain', { echo: { chainId: 8453 } }],
+    ['a chainId that is the right number as text', { echo: { chainId: '1' } }],
+    ['no sellChain', { echo: { sellChain: undefined } }],
+    ['no buyChain', { echo: { buyChain: undefined } }],
+    ['no chainId', { echo: { chainId: undefined } }],
+    ['no serverTime', { echo: { serverTime: undefined } }],
+    ['no ttlSeconds', { echo: { ttlSeconds: undefined } }],
+    ['a serverTime that is not a number', { echo: { serverTime: 'now' } }],
+    ['a serverTime that does not add up to the deadline', { echo: { serverTime: 1_700_000_000 } }],
+    ['a ttlSeconds that is not a number', { echo: { ttlSeconds: '60' } }],
+    ['a deadline one second late', { deadlineOffsetSec: 1 }],
+    ['a deadline one second early', { deadlineOffsetSec: -1 }],
+  ];
+
+  for (const [name, settings] of swapCases) {
+    test(`an answer with ${name} is refused whole: nothing of it is shown, nothing loops`, async ({
+      page,
+      api,
+    }) => {
+      Object.assign(api.quoteSettings, settings);
+      const logged: string[] = [];
+      page.on('console', (m) => logged.push(m.text()));
+      await amount(page).fill('0.05');
+      await expect(cta(page)).toHaveText('Quote unavailable');
+      await expect(receive(page)).toHaveText('0');
+      await expect(main(page).getByText(/Best of|Expires in/)).toHaveCount(0);
+      await expect(rateButton(page)).toHaveCount(0);
+      // Nothing the answer carried is anywhere on the page.
+      const text = await page.evaluate(() => document.body.innerText);
+      for (const shown of ['124.75', '124.12', '0.0001 ETH']) expect(text).not.toContain(shown);
+      const html = await page.evaluate(() => document.documentElement.outerHTML);
+      for (const secret of SECRETS) expect(html).not.toContain(secret);
+      expect(logged.join('\n')).not.toMatch(/SIGNATURE|CALLDATA/);
+      // No loop: it is not asked again by itself.
+      await page.waitForTimeout(1_500);
+      expect(quotes(api)).toHaveLength(1);
+    });
+  }
+
+  test('an answer for the chain the API signed on, but whose chainId is a different number, is refused', async ({
+    page,
+    api,
+  }) => {
+    api.quoteSettings.echo = { chainId: 2 };
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Quote unavailable');
+  });
+
+  test('a wrap answered for another chain is refused too', async ({ page, api }) => {
+    await pick(page, 'receive', 'WETH', 'Ethereum');
+    api.quoteSettings.echo = { sellChain: 'evm:8453', buyChain: 'evm:8453', chainId: 8453 };
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Quote unavailable');
+    await expect(receive(page)).toHaveText('0');
+    await expect(main(page).getByText('Wrap, 1 to 1, no routing needed')).toHaveCount(0);
+    await page.waitForTimeout(1_000);
+    expect(quotes(api)).toHaveLength(1);
+  });
+
+  test('a wrap with no chain echo is refused', async ({ page, api }) => {
+    await pick(page, 'receive', 'WETH', 'Ethereum');
+    api.quoteSettings.echo = { chainId: undefined };
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Quote unavailable');
+  });
+
+  test('a wrap that carries a lifetime is refused', async ({ page, api }) => {
+    await pick(page, 'receive', 'WETH', 'Ethereum');
+    api.quoteSettings.echo = { ttlSeconds: 60 };
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Quote unavailable');
+  });
+
+  test('the answer for the right chain is accepted, on every chain the app quotes', async ({
+    page,
+    api,
+  }) => {
+    await pick(page, 'pay', 'ETH', 'Base');
+    await pick(page, 'receive', 'USDC', 'Base');
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Review swap');
+    const body = quotes(api)[0]!.body as { sellToken: { chain: string } };
+    expect(body.sellToken.chain).toBe('evm:8453');
+  });
+});
+
 test.describe('the countdown and expiry', () => {
   test.beforeEach(async ({ page }) => openConnected(page));
 
-  test('counts down from the answer, and an expired quote is replaced', async ({ page, api }) => {
-    api.quoteSettings.ttlSec = 3;
-    await ready(page);
+  const secondsShown = async (page: Page) => {
     const text = await main(page)
       .getByText(/Expires in \d+s/)
       .textContent();
-    expect(Number(/Expires in (\d+)s/.exec(text ?? '')![1])).toBeLessThanOrEqual(3);
+    return Number(/Expires in (\d+)s/.exec(text ?? '')![1]);
+  };
+
+  test('counts down from the answer, and an expired quote is replaced', async ({ page, api }) => {
+    // The shortest lifetime the API allows (10 s). The countdown starts from what the quote has
+    // left (at most 9 s: the server's whole-second clock may have lost one) and runs out.
+    api.quoteSettings.ttlSec = 10;
+    await ready(page);
+    expect(await secondsShown(page)).toBeLessThanOrEqual(9);
     // Hold the replacement so the "expired" state can be seen.
     const next = deferred();
     api.override((r) => (r.path === '/v1/quotes' ? { gate: next.promise } : undefined));
-    await expect(cta(page)).toHaveText('Quote expired', { timeout: 6_000 });
+    await expect(cta(page)).toHaveText('Quote expired', { timeout: 12_000 });
     await expect(note(page)).toHaveText('That quote expired. Getting a new one.');
     await expect(receive(page)).not.toHaveText('124.75');
     expect(quotes(api)).toHaveLength(2);
@@ -837,23 +996,81 @@ test.describe('the countdown and expiry', () => {
     await expect(receive(page)).toHaveText('124.75');
   });
 
-  test('a device clock that runs behind never shows more than the quote can have', async ({
+  test('a short lifetime counts down from the shorter value, not from the 60 s cap', async ({
     page,
     api,
   }) => {
-    api.quoteSettings.deadlineSkewSec = 3_600; // the deadline looks an hour further away
+    api.quoteSettings.ttlSec = 10;
     await ready(page);
-    const text = await main(page)
-      .getByText(/Expires in \d+s/)
-      .textContent();
-    expect(Number(/Expires in (\d+)s/.exec(text ?? '')![1])).toBeLessThanOrEqual(60);
+    const first = await secondsShown(page);
+    expect(first).toBeLessThanOrEqual(9);
+    expect(first).toBeGreaterThanOrEqual(6);
+    await expect
+      .poll(() => secondsShown(page), { timeout: 6_000 })
+      .toBeLessThanOrEqual(Math.max(first - 3, 0));
+  });
+
+  test('a long lifetime (600 s) is capped at 60 s, counted from the request', async ({
+    page,
+    api,
+  }) => {
+    api.quoteSettings.ttlSec = 600;
+    await ready(page);
+    expect(await secondsShown(page)).toBeLessThanOrEqual(60);
+    expect(await secondsShown(page)).toBeGreaterThanOrEqual(55);
+  });
+
+  test('the default lifetime (60 s) shows at most 59 s: the server lost up to a second to rounding', async ({
+    page,
+  }) => {
+    await ready(page);
+    expect(await secondsShown(page)).toBeLessThanOrEqual(59);
+  });
+
+  test('a lifetime the API cannot configure (9 s) is refused, and nothing loops', async ({
+    page,
+    api,
+  }) => {
+    api.quoteSettings.ttlSec = 9;
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Quote unavailable');
+    await expect(receive(page)).toHaveText('0');
+    await page.waitForTimeout(1_500);
+    expect(quotes(api)).toHaveLength(1);
+  });
+
+  test('a small difference between the device clock and the API clock changes nothing', async ({
+    page,
+    api,
+  }) => {
+    for (const ahead of [10, -10]) {
+      api.quoteSettings.serverClockAheadSec = ahead;
+      await amount(page).fill(ahead > 0 ? '0.05' : '0.06');
+      await expect(cta(page)).toHaveText('Review swap');
+      expect(await secondsShown(page)).toBeLessThanOrEqual(59);
+      expect(await secondsShown(page)).toBeGreaterThanOrEqual(55);
+    }
+  });
+
+  test("a device clock that runs behind the API's is reported, whatever the quote's deadline says", async ({
+    page,
+    api,
+  }) => {
+    api.quoteSettings.serverClockAheadSec = 3_600; // the deadline looks an hour further away
+    await amount(page).fill('0.05');
+    await expect(cta(page)).toHaveText('Check your clock');
+    await expect(note(page)).toContainText('Your device clock looks wrong');
+    await expect(receive(page)).toHaveText('0');
+    await expect(main(page).getByText(/Expires in|Best of/)).toHaveCount(0);
+    await page.waitForTimeout(1_500);
+    expect(quotes(api)).toHaveLength(1);
   });
 
   test('a device clock that runs ahead is reported, and nothing is asked in a loop', async ({
     page,
     api,
   }) => {
-    api.quoteSettings.deadlineSkewSec = -3_600; // the deadline is already an hour past
+    api.quoteSettings.serverClockAheadSec = -3_600; // the deadline is already an hour past
     await amount(page).fill('0.05');
     await expect(cta(page)).toHaveText('Check your clock');
     await expect(note(page)).toContainText('Your device clock looks wrong');
@@ -1239,13 +1456,13 @@ test.describe('screenshots', () => {
     [
       'expired',
       async (page, api) => {
-        api.quoteSettings.ttlSec = 2;
+        api.quoteSettings.ttlSec = 10; // the shortest the API allows
         // Every replacement is stopped too, so the screen settles on "expired".
         await ready(page);
         api.override((r) =>
           r.path === '/v1/quotes' ? { gate: new Promise(() => {}) } : undefined,
         );
-        await expect(cta(page)).toHaveText('Quote expired');
+        await expect(cta(page)).toHaveText('Quote expired', { timeout: 12_000 });
       },
     ],
     [

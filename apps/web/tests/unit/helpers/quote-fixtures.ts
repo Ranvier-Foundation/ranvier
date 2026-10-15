@@ -28,6 +28,11 @@ export const SECRETS = [
   'Uniswap_V3',
 ];
 
+/** The chain, as the API echoes it (ADR 0012), for `ASK` (Ethereum). */
+export const CHAIN_ECHO = { sellChain: 'evm:1', buyChain: 'evm:1', chainId: 1 } as const;
+/** The timing of a signed answer: `deadline == serverTime + ttlSeconds` for `swapAnswer`. */
+export const TIMING_ECHO = { serverTime: 1_790_000_000, ttlSeconds: 60 } as const;
+
 /** A routed answer shaped like `POST /v1/quotes` (apps/api/src/http/server.ts) for `ASK`. */
 export function swapAnswer(over: { fee?: Json; best?: Json; quote?: Json; top?: Json } = {}): Json {
   const best = {
@@ -72,6 +77,8 @@ export function swapAnswer(over: { fee?: Json; best?: Json; quote?: Json; top?: 
         value: '50000000000000000',
       },
     },
+    ...CHAIN_ECHO,
+    ...TIMING_ECHO,
     ...over.top,
   };
 }
@@ -82,7 +89,7 @@ export const WRAP_ASK: QuoteAsk = {
   buyToken: { chain: 'evm:1', address: WETH },
 };
 
-export function wrapAnswer(over: { direct?: Json; fee?: Json } = {}): Json {
+export function wrapAnswer(over: { direct?: Json; fee?: Json; top?: Json } = {}): Json {
   return {
     fee: { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0', ...over.fee },
     direct: {
@@ -92,5 +99,7 @@ export function wrapAnswer(over: { direct?: Json; fee?: Json } = {}): Json {
       minBuyAmount: '50000000000000000',
       ...over.direct,
     },
+    ...CHAIN_ECHO,
+    ...over.top,
   };
 }

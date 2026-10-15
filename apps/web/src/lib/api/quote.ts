@@ -1,5 +1,8 @@
+import { getChain } from '@ranvier/chains';
 import { FEE_SCHEDULE, feeAmount } from '@ranvier/fees';
-import type { FeeReason, TokenRef } from '@ranvier/types';
+import type { ChainKey, FeeReason, TokenRef } from '@ranvier/types';
+import { evmChainId } from '../wallet/chains';
+import { QUOTE_TTL_MAX_SECONDS, QUOTE_TTL_MIN_SECONDS } from '../swap/config';
 import { list, record, SchemaError, text, type Json } from './schemas';
 
 /**
@@ -38,8 +41,12 @@ export type SwapQuote = {
   /** How many routes were compared (successful, vetted quotes). */
   routeCount: number;
   fee: QuoteFee;
-  /** Absolute expiry as the server wrote it: unix seconds. */
+  /** Absolute expiry as the server wrote it: unix seconds. Always `serverTimeSec + ttlSeconds`. */
   deadlineSec: bigint;
+  /** The server clock reading the deadline was computed from: unix seconds (ADR 0012). */
+  serverTimeSec: number;
+  /** The signed lifetime, 10 to 600 seconds (ADR 0012). */
+  ttlSeconds: number;
 };
 
 export type WrapQuote = {
@@ -68,6 +75,8 @@ const MAX_UINT256 = 2n ** 256n - 1n;
 const EVM_ADDRESS_ANY_CASE = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MAX_QUOTES = 16;
+/** Longest unix-seconds value read from the answer: a safe integer, well past any real clock. */
+const MAX_SERVER_TIME_SEC = 99_999_999_999_999;
 /** Longest provider name shown. */
 const MAX_PROVIDER_CHARS = 32;
 
@@ -147,7 +156,45 @@ function address(value: unknown, path: string): string {
   return value.toLowerCase();
 }
 
+/**
+ * The numeric chain ID of the chain the request is for, from the checked-in registry (never from
+ * the answer). Only a same-chain EVM request has one: that is all the API signs (ADR 0004), so a
+ * request on two chains, or on a chain the registry lacks, has no answer this screen accepts.
+ */
+function requestedChainId(ask: QuoteAsk): number {
+  const sell: ChainKey = ask.sellToken.chain;
+  if (ask.buyToken.chain !== sell) throw new SchemaError('(chain)');
+  const chain = getChain(sell);
+  const id = chain === undefined ? undefined : evmChainId(chain);
+  if (id === undefined) throw new SchemaError('(chain)');
+  return id;
+}
+
+/**
+ * ADR 0012, "what a client must do": the answer is refused unless it says it was built for the
+ * chain that was asked. The native coin is the zero address on every EVM chain and some tokens
+ * share an address across chains, so the token checks cannot tell chains apart; this can. The
+ * mapping from chain key to number comes from the registry, not from the answer.
+ */
+function checkChainEcho(o: Json, ask: QuoteAsk): void {
+  const id = requestedChainId(ask);
+  if (o['sellChain'] !== ask.sellToken.chain) throw new SchemaError('sellChain');
+  if (o['buyChain'] !== ask.buyToken.chain) throw new SchemaError('buyChain');
+  if (o['chainId'] !== id) throw new SchemaError('chainId');
+}
+
+/** A whole number of seconds the JSON can carry exactly, within `[min, max]`. */
+function seconds(value: unknown, path: string, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new SchemaError(path);
+  }
+  return value;
+}
+
 function parseDirect(o: Json, ask: QuoteAsk, fee: QuoteFee): WrapQuote {
+  // A direct answer has no signature and so no lifetime: timing fields on one are not the API's.
+  if (o['serverTime'] !== undefined) throw new SchemaError('serverTime');
+  if (o['ttlSeconds'] !== undefined) throw new SchemaError('ttlSeconds');
   const d = record(o['direct'], 'direct');
   const kind = d['kind'];
   if (kind !== 'wrap' && kind !== 'unwrap') throw new SchemaError('direct.kind');
@@ -206,6 +253,18 @@ function parseSwap(o: Json, ask: QuoteAsk, fee: QuoteFee): SwapQuote {
   if (typeof deadline !== 'string' || !/^[1-9]\d{0,14}$/.test(deadline)) {
     throw new SchemaError('swap.quote.deadline');
   }
+  // The signed deadline must be the one the timing fields say: serverTime + ttlSeconds, exactly.
+  const serverTimeSec = seconds(o['serverTime'], 'serverTime', 1, MAX_SERVER_TIME_SEC);
+  const ttlSeconds = seconds(
+    o['ttlSeconds'],
+    'ttlSeconds',
+    QUOTE_TTL_MIN_SECONDS,
+    QUOTE_TTL_MAX_SECONDS,
+  );
+  const deadlineSec = BigInt(deadline);
+  if (deadlineSec !== BigInt(serverTimeSec) + BigInt(ttlSeconds)) {
+    throw new SchemaError('swap.quote.deadline');
+  }
   return {
     kind: 'swap',
     buyAmount,
@@ -215,18 +274,23 @@ function parseSwap(o: Json, ask: QuoteAsk, fee: QuoteFee): SwapQuote {
     provider,
     routeCount,
     fee,
-    deadlineSec: BigInt(deadline),
+    deadlineSec,
+    serverTimeSec,
+    ttlSeconds,
   };
 }
 
 /**
  * Parses the answer to the request `ask`. It must be exactly one of a routed swap (with the signed
- * fee quote) or a direct wrap/unwrap, and it must echo the taker, the tokens and the sell amount
- * (the API's answer carries no chain keys, so the chain is bound by pairing this answer with its
- * own request: one request, one answer, late answers dropped by the caller).
+ * fee quote) or a direct wrap/unwrap, and it must echo the chain, the taker, the tokens and the
+ * sell amount (ADR 0011, ADR 0012). The chain echo (`sellChain`, `buyChain`, `chainId`) is
+ * required on both kinds; a routed swap also needs its timing (`serverTime`, `ttlSeconds`), and
+ * its signed deadline must equal their sum. Pairing this answer with its own request (one request,
+ * one answer, late answers dropped by the caller) still holds.
  */
 export function parseQuote(json: unknown, ask: QuoteAsk): ApiQuote {
   const o = record(json, '(body)');
+  checkChainEcho(o, ask);
   const fee = parseFee(o['fee'], ask.sellAmount);
   const direct = o['direct'] !== undefined;
   const swap = o['swap'] !== undefined;

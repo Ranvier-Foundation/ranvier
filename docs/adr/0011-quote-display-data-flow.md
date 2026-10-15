@@ -35,7 +35,7 @@ A response that does not match is refused whole (`ApiError('invalid')`, shown as
 - `swap.quote` must echo the taker (compared without case), the sell and buy token (the zero address stands for the native coin) and the sell amount. The signed `feeAmount` must equal `fee.amount` and the signed `minAmountOut` must equal `best.minBuyAmount`, so the fee and the minimum on screen are the ones the API signed.
 - A direct wrap must say `wrap` for a sold native coin and `unwrap` for a sold wrapped token, and its output and minimum must equal the sell amount (1:1).
 - The fee must be one the schedule can produce, checked against `@ranvier/fees` (no number is typed in the app): a rate on the schedule for its reason and under the contract cap (`FEE_SCHEDULE.maxBps`), and the amount `feeAmount(sellAmount, bps)` exactly (a first-swap waiver may charge less, never more, with a waived value above zero and not above `firstSwapFreeUsd`). A fee outside the schedule is refused. A wrap fee reason on a routed swap, and a charged wrap, are refused.
-- The answer carries no chain keys. The chain is bound by pairing the answer with its own request (one request, one answer) and by dropping late answers (below). Recorded as an API gap.
+- The chain is bound by pairing the answer with its own request (one request, one answer) and by dropping late answers (below). Originally the answer carried no chain keys (an API gap); ADR 0012 added them and the web now requires them: `sellChain`, `buyChain` and `chainId` must match the request and the registry. Status: the web enforces this.
 
 ### Requests
 
@@ -45,13 +45,15 @@ Slippage is one constant for "Auto" (`AUTO_SLIPPAGE_BPS`, 50, the canvas's "Auto
 
 ### Amounts
 
-The typed text is a decimal string. It is cleaned on every edit (`cleanAmountText`): ASCII digits and one decimal point only, comma grouping accepted only in the thousands form, at most `MAX_AMOUNT_CHARS` (80) characters, no more fraction digits than the token has decimals and no decimal point for a token with 0 decimals. A refused edit leaves the field as it was. The base units are computed with `bigint` (`parseAmount`): exact, nothing rounded, zero is "enter an amount", more than uint256 is "amount too large". A token change cuts the text to the new decimals (never rounds). ESLint bans `Number()`, `parseFloat`, `Math` rounding, unary plus, float formatting and decimal literals in the three money-path files (`swap/amount.ts`, `swap/rate.ts`, `api/quote.ts`). Decimals come from the checked-in token list (`@ranvier/chains`), the same list the API cross-checks the oracle against (ADR 0004, ADR 0006). The rate is `numerator * 10^decimals / denominator` in `bigint`, truncated.
+The typed text is a decimal string. It is cleaned on every edit (`cleanAmountText`): ASCII digits and one decimal point only, comma grouping accepted only in the thousands form, at most `MAX_AMOUNT_CHARS` (80) characters, no more fraction digits than the token has decimals and no decimal point for a token with 0 decimals. A refused edit leaves the field as it was. The base units are computed with `bigint` (`parseAmount`): exact, nothing rounded, zero is "enter an amount", more than uint256 is "amount too large". A token change cuts the text to the new decimals (never rounds). ESLint bans `Number` (any use but `Number.isInteger` and `Number.isSafeInteger`: calls, optional calls, `new`, `globalThis.Number`, aliases), `parseFloat` and `parseInt` (bare or on any object), `Math` rounding and powers, `Intl`, unary plus, float formatting (also by bracket access) and decimal or exponent literals in the money-path files: the three above, `format.ts` and the other money, fee and token display files (`MONEY_PATH_FILES` in `eslint.config.mjs`). A unit test (`money-lint.test.ts`) lints a violation of each kind against the config. Decimals come from the checked-in token list (`@ranvier/chains`), the same list the API cross-checks the oracle against (ADR 0004, ADR 0006). The rate is `numerator * 10^decimals / denominator` in `bigint`, truncated.
 
 ### Stale answers
 
 Every quote request belongs to a session of the parameters (sell token, buy token, amount, taker, slippage). A change of any of them ends the session and aborts its request; an answer that arrives after its session ended is dropped even if the client resolved anyway (including the case of parameters that go A, B, A, where the first A's answer must not land on the second A). The render for new parameters never returns the previous parameters' state, not even for the one render before the effect runs. A wallet that changes (or disconnects) mid-quote is a change of parameters. Typing is debounced (`QUOTE_DEBOUNCE_MS`). Errors are not retried by themselves. The unit tests (`swap-quote-hook.test.tsx`) prove each guard by mutation: twelve mutations of `use-quote.ts` (each guard removed, the abort removed, the render guard removed, the idle cap removed, the hidden-tab rule removed, the clock-error branch removed, the key's case folding removed, the visibility listener removed, the typing pause kept on refresh, a wrap given an expiry) each fail at least one test. The e2e tests show the same at the page level with answers that outlive their abort.
 
 ### Expiry and the clock
+
+> Status: superseded in part by ADR 0012 and enforced by the web. The API now sends `serverTime` and `ttlSeconds`; the lifetime is `min(ttlSeconds, 60 s)` less one second, counted from the send, and the device clock is compared with `serverTime` (both directions). Steps 1 to 3 below describe the earlier design that worked from the deadline alone; steps 4 and 5 (monotonic countdown, the wall guard, replacement and its limits) still hold. See ADR 0012, "Web enforcement".
 
 The API sends one absolute deadline (`swap.quote.deadline`, unix seconds, the server's clock; the signing validity is 60 seconds by default and configurable from 10 to 600 seconds). It does not send the server's time or a duration, and the browser cannot read the `Date` header (CORS exposes no headers, ADR 0006). The device clock may be off by any amount, so the deadline is never compared with "now" while the quote is on screen. What the screen does:
 
@@ -63,7 +65,7 @@ The API sends one absolute deadline (`swap.quote.deadline`, unix seconds, the se
 
 The countdown text is not a live region. Screen readers hear one announcement per quote ("Quote ready...") and one per change of the note under the button, not one per second or per keystroke (the `<output>` of the receive amount is `aria-live="off"`).
 
-If the API sent its time (or the validity in seconds) with the quote, steps 2 and 3 would shrink to subtracting a measured skew. Recommended as an API change; not made here.
+The API now sends its time and the lifetime (ADR 0012); steps 2 and 3 are replaced as the status note above says.
 
 ### Balances are display only
 
@@ -79,7 +81,7 @@ When a fresh quote is on screen the button reads "Review swap", is disabled, and
 
 ## Consequences
 
-- API gaps found while building this (not changed here; each would shrink client code): the answer has no chain keys (the chain is bound only by pairing); no USD value of the sold amount (so the pay row shows none once an amount is typed, and the canvas's "(-0.29%)" price impact and "Gas, bridge and LP" total are not shown); no server time or validity duration (the clock approach above); a direct wrap answer echoes nothing but the amounts. The chain and timing gaps are closed on the API side by ADR 0012 (`sellChain`, `buyChain`, `chainId`, `serverTime`, `ttlSeconds`); the web adopts them in a later change.
+- API gaps found while building this (not changed here; each would shrink client code): the answer has no chain keys (the chain is bound only by pairing); no USD value of the sold amount (so the pay row shows none once an amount is typed, and the canvas's "(-0.29%)" price impact and "Gas, bridge and LP" total are not shown); no server time or validity duration (the clock approach above); a direct wrap answer echoes nothing but the amounts. The chain and timing gaps are closed by ADR 0012 (`sellChain`, `buyChain`, `chainId`, `serverTime`, `ttlSeconds`), and the web enforces them.
 - The itemised fee list is the Ranvier fee, the network cost (an estimate) and the minimum received. Bridge fee, liquidity provider fees, price impact and a total (handoff content rules) need data the API does not send; they are not invented.
 - The token list in the web bundle and the API's list are the same checked-in list from one release, but a web build older than the API can lack a newly listed token (the screen says so).
 - The "Auto" slippage is one constant until smart slippage exists.

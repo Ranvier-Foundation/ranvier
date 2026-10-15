@@ -2,7 +2,13 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ApiClient from '../../src/lib/api/client';
 import type { ApiQuote, QuoteAsk, SwapQuote, WrapQuote } from '../../src/lib/api/quote';
-import { MAX_IDLE_REFRESHES, QUOTE_DEBOUNCE_MS } from '../../src/lib/swap/config';
+import {
+  CLOCK_SKEW_TOLERANCE_MS,
+  MAX_IDLE_REFRESHES,
+  QUOTE_DEBOUNCE_MS,
+  QUOTE_LIFETIME_CAP_MS,
+  SERVER_CLOCK_GRANULARITY_MS,
+} from '../../src/lib/swap/config';
 import type { Clock } from '../../src/lib/swap/expiry';
 import { quoteErrorKind, quoteKey, useQuote } from '../../src/lib/swap/use-quote';
 import { ASK, TAKER } from './helpers/quote-fixtures';
@@ -77,7 +83,7 @@ function makeDocument() {
 }
 
 const clockState = { c: makeClock(), d: makeDocument() };
-const swap = (buy: bigint, deadlineSec: number): SwapQuote => ({
+const swap = (buy: bigint, serverTimeSec: number, ttlSeconds: number): SwapQuote => ({
   kind: 'swap',
   buyAmount: buy,
   minBuyAmount: buy - 1n,
@@ -86,7 +92,9 @@ const swap = (buy: bigint, deadlineSec: number): SwapQuote => ({
   provider: '0x',
   routeCount: 2,
   fee: { bps: 20, reason: 'tier-under-10k', amount: 1n, waivedUsdCents: 0n },
-  deadlineSec: BigInt(Math.floor(deadlineSec)),
+  deadlineSec: BigInt(serverTimeSec + ttlSeconds),
+  serverTimeSec,
+  ttlSeconds,
 });
 const wrap = (): WrapQuote => ({
   kind: 'wrap',
@@ -95,8 +103,12 @@ const wrap = (): WrapQuote => ({
   minBuyAmount: 5n,
   fee: { bps: 0, reason: 'wrap-unwrap', amount: 0n, waivedUsdCents: 0n },
 });
-/** A quote valid for `lifetimeSec` from the fake device's now. */
-const fresh = (buy: bigint, lifetimeSec = 60) => swap(buy, clockState.c.wall / 1000 + lifetimeSec);
+/**
+ * A quote the API signed for `ttlSeconds`, as read at the fake device's now. `serverAheadSec` is
+ * how far the API's clock is ahead of the device's (negative: behind).
+ */
+const fresh = (buy: bigint, ttlSeconds = 60, serverAheadSec = 0) =>
+  swap(buy, Math.floor(clockState.c.wall / 1000) + serverAheadSec, ttlSeconds);
 
 const ask = (amount: bigint, taker = TAKER): QuoteAsk => ({ ...ASK, sellAmount: amount, taker });
 type Props = { ask: QuoteAsk | null };
@@ -304,14 +316,38 @@ describe('useQuote: errors', () => {
     await run.unmount();
   });
 
-  it('a quote whose deadline has already passed on the device is a clock error, and is not asked for again', async () => {
-    const run = await start(ask(1n));
-    await pause();
-    pending.list[0]!.resolve(swap(5n, clockState.c.wall / 1000 - 30));
-    await vi.waitFor(() => expect(run.latest.state).toEqual({ status: 'error', kind: 'clock' }));
-    await advance(10 * 60_000);
-    expect(pending.list).toHaveLength(1);
-    await run.unmount();
+  it.each([
+    ['an hour ahead', 3_600],
+    ['an hour behind', -3_600],
+    ['just beyond the tolerance, ahead', CLOCK_SKEW_TOLERANCE_MS / 1000 + 2],
+    ['just beyond the tolerance, behind', -(CLOCK_SKEW_TOLERANCE_MS / 1000 + 2)],
+  ])(
+    'a device clock that is %s of the server is a clock error, and is not asked for again',
+    async (_n, ahead) => {
+      // `ahead` is how far the API's clock is ahead of the device's.
+      const run = await start(ask(1n));
+      await pause();
+      pending.list[0]!.resolve(fresh(5n, 60, ahead));
+      await vi.waitFor(() => expect(run.latest.state).toEqual({ status: 'error', kind: 'clock' }));
+      await advance(10 * 60_000);
+      expect(pending.list).toHaveLength(1);
+      await run.unmount();
+    },
+  );
+
+  it('a device clock inside the tolerance is not an error and does not change the countdown', async () => {
+    for (const ahead of [-20, 20]) {
+      pending.list.length = 0;
+      const run = await start(ask(1n));
+      await pause();
+      pending.list[0]!.resolve(fresh(5n, 30, ahead));
+      await vi.waitFor(() => expect(run.latest.state.status).toBe('ready'));
+      await advance(30_000 - SERVER_CLOCK_GRANULARITY_MS - 1);
+      expect(pending.list).toHaveLength(1);
+      await advance(1);
+      expect(pending.list).toHaveLength(2);
+      await run.unmount();
+    }
   });
 
   it.each([
@@ -358,10 +394,11 @@ describe('useQuote: expiry', () => {
     const run = await start(ask(1n));
     await pause();
     await ready(run, 0, 111n);
-    await advance(59_000);
+    // A 60 s lifetime counts from the send, less the second the API's clock may have lost.
+    await advance(60_000 - SERVER_CLOCK_GRANULARITY_MS - 1);
     expect(run.latest.state.status).toBe('ready');
     expect(pending.list).toHaveLength(1);
-    await advance(1_000);
+    await advance(1);
     expect(pending.list).toHaveLength(2);
     expect(run.latest.state).toEqual({ status: 'loading', after: 'expiry' });
     await ready(run, 1, 222n);
@@ -369,12 +406,64 @@ describe('useQuote: expiry', () => {
     await run.unmount();
   });
 
-  it('a shorter server lifetime is followed', async () => {
+  it.each([10, 30, 60, 600])(
+    "the answer's lifetime of %i s is followed, up to the cap, counted from the send",
+    async (ttl) => {
+      const lifetime = Math.min(ttl * 1000 - SERVER_CLOCK_GRANULARITY_MS, QUOTE_LIFETIME_CAP_MS);
+      const run = await start(ask(1n));
+      await pause();
+      await advance(0);
+      await ready(run, 0, 111n, ttl);
+      await advance(lifetime - 1);
+      expect(pending.list).toHaveLength(1);
+      expect(run.latest.state.status).toBe('ready');
+      await advance(1);
+      expect(pending.list).toHaveLength(2);
+      expect(run.latest.state).toEqual({ status: 'loading', after: 'expiry' });
+      await run.unmount();
+    },
+  );
+
+  it('an API lifetime of 600 s never keeps a quote longer than the cap', async () => {
     const run = await start(ask(1n));
     await pause();
-    await ready(run, 0, 111n, 10);
-    await advance(10_000);
+    await ready(run, 0, 111n, 600);
+    await advance(QUOTE_LIFETIME_CAP_MS);
     expect(pending.list).toHaveLength(2);
+    await run.unmount();
+  });
+
+  it('the lifetime counts from the send: a slow answer has that much less', async () => {
+    const run = await start(ask(1n));
+    await pause();
+    await advance(5_000); // the request has been out for five seconds
+    pending.list[0]!.resolve(fresh(111n, 30));
+    await vi.waitFor(() => expect(run.latest.state.status).toBe('ready'));
+    await advance(30_000 - SERVER_CLOCK_GRANULARITY_MS - 5_000 - 1);
+    expect(pending.list).toHaveLength(1);
+    await advance(1);
+    expect(pending.list).toHaveLength(2);
+    await run.unmount();
+  });
+
+  it('an answer that took the whole lifetime is never shown: it is replaced, and a slow API cannot loop', async () => {
+    const run = await start(ask(1n));
+    await pause();
+    const life = 10_000 - SERVER_CLOCK_GRANULARITY_MS;
+    for (let n = 0; n <= MAX_IDLE_REFRESHES; n++) {
+      await vi.waitFor(() => expect(pending.list.length).toBeGreaterThan(n));
+      await advance(life);
+      pending.list[n]!.resolve(fresh(100n + BigInt(n), 10));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      // Not one render shows a ready quote.
+      expect(run.renders.some((r) => r.result.state.status === 'ready')).toBe(false);
+    }
+    expect(run.latest.state).toEqual({ status: 'expired' });
+    expect(pending.list).toHaveLength(MAX_IDLE_REFRESHES + 1);
+    await advance(10 * 60_000);
+    expect(pending.list).toHaveLength(MAX_IDLE_REFRESHES + 1);
     await run.unmount();
   });
 

@@ -172,6 +172,7 @@
   "swap.rate.label": "Rate and fees: 1 {receive} equals {rate} {pay}. Show details",
   "swap.details.title": "Rates and fees",
   "swap.details.rate": "1 {from} = {rate} {to}",
+  "swap.details.rate.note": "These rates include the Ranvier fee: they compare what you pay with what you receive.",
   "swap.details.fee": "Ranvier fee",
   "swap.details.fee.value": "{rate} · {amount} {symbol}",
   "swap.details.fee.signed": "The fee is the exact amount signed into this quote.",

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, apiConfigured, fetchQuote } from '@/lib/api/client';
 import type { ApiQuote, QuoteAsk } from '@/lib/api/quote';
 import { MAX_IDLE_REFRESHES, QUOTE_DEBOUNCE_MS } from './config';
-import { expiryFromDeadline, msLeft, realClock, type Clock, type Expiry } from './expiry';
+import { expiryFromTiming, msLeft, realClock, type Clock, type Expiry } from './expiry';
 
 /** Why there is no quote. Each maps to calm copy in the message file. */
 export type QuoteErrorKind =
@@ -131,7 +131,7 @@ export function useQuote(ask: QuoteAsk | null, options: UseQuoteOptions = {}): U
       const controller = new AbortController();
       inFlight = controller;
       set({ status: 'loading', after });
-      const sentMono = clock.mono();
+      const sent = { mono: clock.mono(), wall: clock.wall() };
       fetchQuote(request, controller.signal).then(
         (quote) => {
           if (session.signal.aborted) return;
@@ -141,9 +141,16 @@ export function useQuote(ask: QuoteAsk | null, options: UseQuoteOptions = {}): U
             set({ status: 'ready', quote, expiry: null });
             return;
           }
-          const made = expiryFromDeadline(quote.deadlineSec, clock, sentMono, clock.mono());
+          const made = expiryFromTiming(quote, clock, sent, clock.mono());
           if (!made.ok) {
-            set({ status: 'error', kind: 'clock' });
+            if (made.reason === 'clock') {
+              // The clocks disagree: asking again would not change that, so nothing loops.
+              set({ status: 'error', kind: 'clock' });
+            } else {
+              // The answer took as long as the quote lives: never shown, replaced like an
+              // expired one (and counted with them, so a slow API cannot loop either).
+              expire();
+            }
             return;
           }
           expiry = made.expiry;
