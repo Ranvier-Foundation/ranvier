@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { ESLint } from 'eslint';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
  * The money-path lint rule (eslint.config.mjs, MONEY_PATH_RULES) is only worth what it catches:
@@ -10,10 +10,26 @@ import { describe, expect, it } from 'vitest';
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const eslint = new ESLint({ cwd: ROOT, overrideConfigFile: `${ROOT}eslint.config.mjs` });
 
+/**
+ * The first lintText loads eslint.config.mjs and builds the typescript-eslint program: ~1.5 s on a
+ * developer machine, but over vitest's 5 s per-test default on a loaded CI runner (it timed out
+ * the first test there). It is paid once, in beforeAll, so no `it` carries it. 120 s is about 80x
+ * the local cost and far above any slow runner seen so far, yet still well below the CI job limit,
+ * so a real hang fails here instead of stalling the job. Only this hook gets it; the per-test
+ * timeout stays at the default, so a slow rule check is still caught.
+ */
+const WARM_UP_TIMEOUT_MS = 120_000;
+
 async function messages(code: string, file = 'apps/web/src/lib/format.ts') {
   const [result] = await eslint.lintText(code, { filePath: `${ROOT}${file}` });
   return (result?.messages ?? []).filter((m) => m.ruleId === 'no-restricted-syntax');
 }
+
+beforeAll(async () => {
+  // Same path as every test: .ts, then .tsx (the component cases lint JSX), so neither is cold.
+  await messages('export const warm = 1n;');
+  await messages('export const Warm = () => <div />;', 'apps/web/src/components/swap-panel.tsx');
+}, WARM_UP_TIMEOUT_MS);
 
 describe('the money-path lint rule', () => {
   it.each([
