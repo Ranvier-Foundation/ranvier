@@ -41,13 +41,17 @@ forge script script/Deploy.s.sol \
 
 `--interactive` prompts for the deployer key so it never lands in shell history. Keep the salt: the same salt and constructor arguments give the same address on other chains.
 
-Before anything is broadcast, the script refuses a published development address in any role or as an initial router: the first 30 anvil and Hardhat test accounts, every address up to `0x…01ff` (`address(0)` and the precompiles, including P256 at `0x…0100`), the CREATE2 factory, forge's default sender and default test contract, and the burn addresses `0x…dEaD` and `0xdEAD…2069`. It fails with `PublishedDevAddress(<role>, <address>)`. Use the fresh keys from step 1.
+Before anything is broadcast, the script refuses a published development address in any role or as an initial router: the first 30 anvil and Hardhat test accounts, every address up to `0x…01ff` (`address(0)` and the precompiles, including P256 at `0x…0100`), the CREATE2 factory, forge's default sender and its test contract addresses (`0x7FA9…1496` and forge-std's `DEFAULT_TEST_CONTRACT` `0x5615…b72f`), and the burn addresses `0x…dEaD` and `0xdEAD…2069`. It fails with `PublishedDevAddress(<role>, <address>)`. Use the fresh keys from step 1.
 
-`INITIAL_ROUTERS` is a comma-separated address list. Unset or empty means no routers. It may be non-empty only on Base Sepolia (84532), Sepolia (11155111), Arbitrum Sepolia (421614) and the local chain 31337; on any other chain ID, mainnet or unknown, the script fails with `InitialRoutersRefused(<chainId>)`. A malformed value (an empty item, a trailing comma, a wrong-length or non-hex address) stops the script instead of being read as "no routers", and a duplicate entry fails with `DuplicateInitialRouter(<address>)`.
+`INITIAL_ROUTERS` is a comma-separated address list. Unset or empty means no routers. It may be non-empty only on Base Sepolia (84532), Sepolia (11155111), Arbitrum Sepolia (421614) and the local chain 31337; on any other chain ID, mainnet or unknown, the script fails with `InitialRoutersRefused(<chainId>)`. A malformed value (an empty item, a trailing comma, a wrong-length or non-hex address) stops the script instead of being read as "no routers", a duplicate entry fails with `DuplicateInitialRouter(<address>)`, and a router that is also the owner, guardian, collector or signer fails with `RouterIsRole(<role>, <address>)`.
 
 ### Take the wrapper address from the broadcast file, not the log
 
-On some chain IDs forge sends the deploy as a plain `CREATE` from the deployer, while the script still logs the CREATE2 address it computed. This was observed with `anvil --chain-id 84532` and in the fork evidence of ADR 0013. The logged address is then empty, the wrapper lands at a nonce-based address, and the `INITIAL_ROUTERS` calls go to the empty logged address, so no router is allowlisted on the real wrapper. After broadcasting:
+With the earlier script (`new FeeWrapper{salt: ...}`), forge's OP-stack network mode sends the deploy as a plain `CREATE` from the deployer while the script logs the CREATE2 address. That mode is switched on for OP-stack chains such as Base Sepolia and Base mainnet, and for their RPCs, whatever flags you pass (`--always-use-create-2-factory` and `--create2-deployer` do not change it). The logged address then has no code, the wrapper lands at a nonce-based address, and the `INITIAL_ROUTERS` calls go to the empty logged address, so the real wrapper has no router.
+
+The current script calls the CREATE2 factory (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) directly. forge broadcasts that call as written, so the wrapper lands at the same address on every chain for the same salt and roles. The script stops if the factory has no code, if a wrapper already exists at that address, if the factory call fails or returns another address, or if a router is not allowlisted afterwards.
+
+Still, take the address only from the broadcast file. The entry has `transactionType` `CREATE2` (to the factory) or, for any older deploy, `CREATE`; `contractName` is null for a plain `CREATE`, so match on the type:
 
 ```sh
 jq -r '.transactions[] | select(.transactionType == "CREATE" or .transactionType == "CREATE2") | .contractAddress' \
@@ -57,7 +61,9 @@ cast code $W --rpc-url https://sepolia.base.org                    # must not be
 cast call $W 'eip712Domain()' --rpc-url https://sepolia.base.org   # must answer
 ```
 
-Never copy the address from the script's log. Then run step 3: if `isRouterAllowed` is false, allowlist the router on `$W` with `setRouter` from the owner.
+Then run step 3, including `isRouterAllowed`. `FEE_WRAPPER_ADDRESS` in the API config and the wrapper pin in the web app take this address from `run-latest.json`, never from the console log.
+
+`vm.envAddress` does not validate EIP-55 checksums: an address with a wrong mixed-case checksum is accepted as is. Double-check every role address and router against its source before you broadcast.
 
 ## 3. Check
 
