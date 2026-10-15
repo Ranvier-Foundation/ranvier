@@ -79,7 +79,7 @@ When a fresh quote is on screen the button reads "Review swap", is disabled, and
 
 ## Consequences
 
-- API gaps found while building this (not changed here; each would shrink client code): the answer has no chain keys (the chain is bound only by pairing); no USD value of the sold amount (so the pay row shows none once an amount is typed, and the canvas's "(-0.29%)" price impact and "Gas, bridge and LP" total are not shown); no server time or validity duration (the clock approach above); a direct wrap answer echoes nothing but the amounts.
+- API gaps found while building this (not changed here; each would shrink client code): the answer has no chain keys (the chain is bound only by pairing); no USD value of the sold amount (so the pay row shows none once an amount is typed, and the canvas's "(-0.29%)" price impact and "Gas, bridge and LP" total are not shown); no server time or validity duration (the clock approach above); a direct wrap answer echoes nothing but the amounts. The chain and timing gaps are closed on the API side by ADR 0012 (`sellChain`, `buyChain`, `chainId`, `serverTime`, `ttlSeconds`); the web adopts them in a later change.
 - The itemised fee list is the Ranvier fee, the network cost (an estimate) and the minimum received. Bridge fee, liquidity provider fees, price impact and a total (handoff content rules) need data the API does not send; they are not invented.
 - The token list in the web bundle and the API's list are the same checked-in list from one release, but a web build older than the API can lack a newly listed token (the screen says so).
 - The "Auto" slippage is one constant until smart slippage exists.

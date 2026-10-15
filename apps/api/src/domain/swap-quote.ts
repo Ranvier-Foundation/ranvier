@@ -1,5 +1,5 @@
 import { NATIVE } from '@ranvier/chains';
-import type { FeeQuote, QuoteRequest, TokenRef } from '@ranvier/types';
+import type { FeeQuote, QuoteChainEcho, QuoteRequest, TokenRef } from '@ranvier/types';
 import {
   encodeFunctionData,
   getAddress,
@@ -68,6 +68,11 @@ export interface SignedSwap {
   signature: Hex;
   /** Transaction the user signs: a call to the fee wrapper. */
   transaction: { to: Hex; data: Hex; value: bigint };
+  /**
+   * The chain this swap was signed for: the very value passed to the EIP-712 domain. Not part
+   * of the signed struct; the HTTP layer echoes it at the top of the answer (ADR 0012).
+   */
+  context: QuoteChainContext;
 }
 
 export function typedData(quote: SwapQuote, chainId: number, feeWrapper: Hex): TypedDataDefinition {
@@ -102,6 +107,24 @@ export function evmChainId(token: TokenRef): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/**
+ * The chain a same-chain EVM quote is built for (ADR 0012): the request's own chain keys and
+ * the numeric chain ID derived from them. For a signed swap `chainId` is the EIP-712 domain
+ * chain ID; for a direct wrap it is the chain of the plain transaction.
+ */
+export type QuoteChainContext = QuoteChainEcho;
+
+/** The context of a same-chain EVM request, or undefined for cross-chain and non-EVM requests. */
+export function sameChainEvmContext(
+  request: Pick<QuoteRequest, 'sellToken' | 'buyToken'>,
+): QuoteChainContext | undefined {
+  const chainId = evmChainId(request.sellToken);
+  if (chainId === undefined || request.buyToken.chain !== request.sellToken.chain) {
+    return undefined;
+  }
+  return { sellChain: request.sellToken.chain, buyChain: request.buyToken.chain, chainId };
+}
+
 export interface BuildSwapInput {
   request: QuoteRequest;
   fee: FeeQuote;
@@ -122,10 +145,9 @@ export interface BuildSwapInput {
  */
 export async function buildSignedSwap(input: BuildSwapInput): Promise<SignedSwap> {
   const { request, fee, route, feeWrapper, signer, deadline, nonce } = input;
-  const chainId = evmChainId(request.sellToken);
-  if (chainId === undefined || request.buyToken.chain !== request.sellToken.chain) {
-    throw new Error('signed swaps are same-chain EVM only');
-  }
+  const context = sameChainEvmContext(request);
+  if (!context) throw new Error('signed swaps are same-chain EVM only');
+  const { chainId } = context;
   if (!signer.canSign(chainId)) throw new Error(`signer refuses chain ${chainId}`);
 
   const routerCalldata = route.tx.data as Hex;
@@ -148,5 +170,5 @@ export async function buildSignedSwap(input: BuildSwapInput): Promise<SignedSwap
     args: [quote, signature, routerCalldata],
   });
   const value = quote.tokenIn === zeroAddress ? quote.amountIn : 0n;
-  return { quote, signature, transaction: { to: feeWrapper, data, value } };
+  return { quote, signature, transaction: { to: feeWrapper, data, value }, context };
 }
