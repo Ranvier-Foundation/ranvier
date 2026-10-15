@@ -2,26 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { ChainKey } from '@ranvier/types';
-import {
-  ApiError,
-  apiConfigured,
-  fetchChains,
-  fetchTokens,
-  isAbort,
-  type ApiErrorKind,
-} from '@/lib/api/client';
-import type { ApiChain, ApiToken } from '@/lib/api/schemas';
+import { fetchTokens, isAbort, type ApiErrorKind } from '@/lib/api/client';
+import type { ApiToken } from '@/lib/api/schemas';
 import type { ChainBalances } from './model';
 import { normaliseQuery } from './search';
 import { useBalances } from './use-balances';
+import { errorKind, useChains, type ChainsState } from './use-chains';
+
+export type { ChainsState };
 
 /** "All networks" or one chain. */
 export type Selection = 'all' | ChainKey;
-
-export type ChainsState =
-  | { status: 'loading' }
-  | { status: 'error'; kind: ApiErrorKind }
-  | { status: 'ready'; chains: readonly ApiChain[] };
 
 export type TokensState =
   | { status: 'loading' }
@@ -30,10 +21,6 @@ export type TokensState =
 
 /** How long typing must pause before the search is sent. */
 export const SEARCH_DEBOUNCE_MS = 200;
-
-function errorKind(err: unknown): ApiErrorKind {
-  return err instanceof ApiError ? err.kind : 'network';
-}
 
 function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -72,27 +59,7 @@ export function useTokenPicker(walletAddress: string | undefined): TokenPickerDa
   const debounced = useDebounced(query, SEARCH_DEBOUNCE_MS);
   const { query: appliedQuery, searchable } = normaliseQuery(debounced, walletAddress);
 
-  const [chains, setChains] = useState<ChainsState>({ status: 'loading' });
-  const [chainsAttempt, setChainsAttempt] = useState(0);
-  useEffect(() => {
-    if (!apiConfigured()) {
-      setChains({ status: 'error', kind: 'unconfigured' });
-      return;
-    }
-    const controller = new AbortController();
-    setChains({ status: 'loading' });
-    fetchChains(controller.signal)
-      .then((all) => {
-        if (controller.signal.aborted) return;
-        // Wallets, balances and the token list are EVM only today (ADR 0006, ADR 0009).
-        setChains({ status: 'ready', chains: all.filter((c) => c.family === 'evm') });
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted || isAbort(err)) return;
-        setChains({ status: 'error', kind: errorKind(err) });
-      });
-    return () => controller.abort();
-  }, [chainsAttempt]);
+  const { chains, retry: retryChains } = useChains();
 
   const chainList = chains.status === 'ready' ? chains.chains : undefined;
   const targets = useMemo<ChainKey[]>(
@@ -162,7 +129,7 @@ export function useTokenPicker(walletAddress: string | undefined): TokenPickerDa
     setSelection,
     query,
     setQuery,
-    retryChains: () => setChainsAttempt((n) => n + 1),
+    retryChains,
     retryTokens: () => setTokensAttempt((n) => n + 1),
     retryBalances: () => setBalancesAttempt((n) => n + 1),
   };

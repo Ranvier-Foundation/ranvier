@@ -49,3 +49,42 @@ export function SearchIcon() {
     </svg>
   );
 }
+
+/** Two opposed arrows: the rate line's "swap" mark (canvas rate pill). */
+export function RateArrowsIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="square"
+      strokeLinejoin="miter"
+      aria-hidden="true"
+    >
+      <path d="M4 9h14l-4-4M20 15H6l4 4" />
+    </svg>
+  );
+}
+
+/** A circled "i": the rate line's "details" mark (canvas rate pill). */
+export function InfoIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6" />
+      <rect x="11" y="7" width="2" height="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

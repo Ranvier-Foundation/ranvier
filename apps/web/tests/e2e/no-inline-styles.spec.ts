@@ -121,6 +121,42 @@ for (const { width, height } of WIDTHS) {
       await expectNoInlineStyles(page);
     });
 
+    test('swap screen with a quote: loading, ready with details, an error, the picker', async ({
+      page,
+      api,
+    }) => {
+      await watch(page);
+      await installWallets(page);
+      await page.goto('/');
+      await hydrated(page);
+      await page.getByRole('banner').getByRole('button', { name: 'Connect wallet' }).click();
+      await page
+        .getByRole('dialog', { name: 'Connect wallet' })
+        .getByRole('button', { name: new RegExp(DEFAULT_WALLET.name) })
+        .click();
+      await expect(
+        page.getByRole('banner').getByRole('button', { name: /^Wallet 0x/ }),
+      ).toBeVisible();
+      const main = page.getByRole('main');
+      await page.locator('#pay').fill('0.05');
+      await expectNoInlineStyles(page);
+      await expect(main.getByRole('button', { name: 'Review swap' })).toBeVisible();
+      await main.getByRole('button', { name: /^Rate and fees/ }).click();
+      await expect(main.getByRole('heading', { name: 'Rates and fees' })).toBeVisible();
+      await expectNoInlineStyles(page);
+      api.override((r) =>
+        r.path === '/v1/quotes'
+          ? { status: 502, json: { error: 'no_route', failures: [] } }
+          : undefined,
+      );
+      await page.locator('#pay').fill('0.06');
+      await expect(main.getByRole('button', { name: 'No route found' })).toBeVisible();
+      await expectNoInlineStyles(page);
+      await main.getByRole('button', { name: /^Receive token:/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Select a token' })).toBeVisible();
+      await expectNoInlineStyles(page);
+    });
+
     test('unknown route is a 404 with no inline styles', async ({ page }) => {
       await watch(page);
       const response = await page.goto(NOT_FOUND_ROUTE);

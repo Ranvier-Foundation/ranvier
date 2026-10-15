@@ -116,6 +116,154 @@ export function balancesAnswer(
   };
 }
 
+/** What the stand-in quote answer is made of. All of it is test data, not a model of the real API. */
+export interface QuoteSettings {
+  /** Seconds the signed quote is valid for, counted from the moment the mock answers. */
+  ttlSec: number;
+  /** Added to the deadline: a device clock that is behind (positive) or ahead (negative) of the API's. */
+  deadlineSkewSec?: number;
+  /** How many routes the answer says it compared. */
+  routes: number;
+  /** The wallet has never swapped: the first $1,000 is free. */
+  firstSwap: boolean;
+  /** Extra or replaced fields, for the strict-validator tests (a mismatch must refuse the answer). */
+  tamper?: (answer: Record<string, unknown>) => void;
+  /** Called with every request body the mock answered. */
+  answered?: (body: QuoteBody) => void;
+}
+
+export interface QuoteBody {
+  sellToken: { chain: ChainKey; address: string };
+  buyToken: { chain: ChainKey; address: string };
+  sellAmount: string;
+  taker: string;
+  slippageBps: number;
+}
+
+/** USD cents of one whole token in the mock's world. */
+const PRICE_CENTS: Record<string, bigint> = {
+  ETH: 250_000n,
+  WETH: 250_000n,
+  USDC: 100n,
+  DAI: 100n,
+  ARB: 100n,
+};
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+function tokenOf(t: { chain: ChainKey; address: string }): TokenFixture {
+  const found = TOKENS[t.chain]?.find((x) => x.address === t.address);
+  if (!found) throw new Error(`the mock does not know ${t.address} on ${t.chain}`);
+  return found;
+}
+
+/**
+ * Answers `POST /v1/quotes` like the real API's shape (apps/api/src/http/server.ts), with made-up
+ * numbers: a fixed price per token, a 0.2% fee (0.05% between two stablecoins, free for a wrap, a
+ * first-swap waiver on request), a $0.31 network cost and a 0.5% slippage floor. The answer also
+ * carries what the web app must never keep (router calldata, signature, the signed transaction):
+ * tests assert none of it reaches the page's storage, console or DOM.
+ */
+export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
+  const body = raw as QuoteBody;
+  settings.answered?.(body);
+  const sell = tokenOf(body.sellToken);
+  const buy = tokenOf(body.buyToken);
+  const sellAmount = BigInt(body.sellAmount);
+  const wrapPair =
+    body.sellToken.chain === body.buyToken.chain &&
+    ((sell.address === 'native' && buy.symbol === 'WETH') ||
+      (buy.address === 'native' && sell.symbol === 'WETH'));
+  if (wrapPair) {
+    const wrap = sell.address === 'native';
+    return {
+      json: {
+        fee: { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0' },
+        direct: {
+          kind: wrap ? 'wrap' : 'unwrap',
+          transaction: {
+            to: WETH_ETHEREUM,
+            data: '0xd0e30db0',
+            value: wrap ? body.sellAmount : '0',
+          },
+          buyAmount: body.sellAmount,
+          minBuyAmount: body.sellAmount,
+        },
+      },
+    };
+  }
+  const sellPrice = PRICE_CENTS[sell.symbol] ?? 100n;
+  const buyPrice = PRICE_CENTS[buy.symbol] ?? 100n;
+  const sellUsd = (sellAmount * sellPrice) / 10n ** BigInt(sell.decimals);
+  const stable = sell.tags.includes('stablecoin') && buy.tags.includes('stablecoin');
+  const bps = stable ? 5n : 20n;
+  const tier = stable ? 'stablecoin' : 'tier-under-10k';
+  let feeAmount = (sellAmount * bps) / 10_000n;
+  let reason: string = tier;
+  let waivedUsd = 0n;
+  if (settings.firstSwap) {
+    waivedUsd = sellUsd < 100_000n ? sellUsd : 100_000n;
+    reason = 'first-swap-promo';
+    feeAmount =
+      sellUsd <= 100_000n ? 0n : (((sellAmount * (sellUsd - 100_000n)) / sellUsd) * bps) / 10_000n;
+  }
+  const net = sellAmount - feeAmount;
+  const buyAmount =
+    (net * sellPrice * 10n ** BigInt(buy.decimals)) / (10n ** BigInt(sell.decimals) * buyPrice);
+  const minBuyAmount = (buyAmount * 9_950n + 9_999n) / 10_000n;
+  const buyAmountUsd = (buyAmount * buyPrice) / 10n ** BigInt(buy.decimals);
+  const deadline =
+    Math.floor(Date.now() / 1000) + settings.ttlSec + (settings.deadlineSkewSec ?? 0);
+  const best = {
+    provider: '0x',
+    buyAmount: buyAmount.toString(),
+    minBuyAmount: minBuyAmount.toString(),
+    gasCostUsd: '31',
+    buyAmountUsd: buyAmountUsd.toString(),
+    route: [
+      {
+        protocol: 'Uniswap_V3',
+        from: body.sellToken.address,
+        to: body.buyToken.address,
+        proportionBps: 10_000,
+      },
+    ],
+    tx: {
+      to: '0x0000000000001ff3684f28c67538d4d072c22734',
+      data: '0x2213bc0bdeadbeefROUTERCALLDATA',
+      value: '0',
+    },
+  };
+  const answer: Record<string, unknown> = {
+    fee: {
+      bps: Number(bps),
+      reason,
+      amount: feeAmount.toString(),
+      waivedUsd: waivedUsd.toString(),
+    },
+    best,
+    quotes: Array.from({ length: settings.routes }, () => best),
+    failures: [],
+    swap: {
+      quote: {
+        user: body.taker.toLowerCase(),
+        tokenIn: body.sellToken.address === 'native' ? ZERO_ADDRESS : body.sellToken.address,
+        tokenOut: body.buyToken.address === 'native' ? ZERO_ADDRESS : body.buyToken.address,
+        amountIn: body.sellAmount,
+        minAmountOut: minBuyAmount.toString(),
+        feeAmount: feeAmount.toString(),
+        router: '0x0000000000001ff3684f28c67538d4d072c22734',
+        routerCalldataHash: '0xSECRETCALLDATAHASH',
+        nonce: '123456789',
+        deadline: String(deadline),
+      },
+      signature: '0xSIGNATUREDONOTKEEP',
+      transaction: { to: '0xFEEWRAPPER', data: '0xSIGNEDSWAPCALLDATA', value: '0' },
+    },
+  };
+  settings.tamper?.(answer);
+  return { json: answer };
+}
+
 /** A request the page made to the API. */
 export interface ApiRequest {
   method: string;
@@ -158,14 +306,21 @@ export class MockApi {
    */
   readonly abortedUrls = new Map<string, number>();
   private overrides: Override[] = [];
+  /** How the default `/v1/quotes` answer is made (see `quoteAnswer`). Change per test. */
+  quoteSettings: QuoteSettings = { ttlSec: 60, routes: 3, firstSwap: false };
 
   /** Adds an override, tried before the defaults (the last one added is tried first). */
   override(fn: Override): void {
     this.overrides.unshift(fn);
   }
 
+  /** Drops every override: the API is back to its normal answers. */
+  clearOverrides(): void {
+    this.overrides = [];
+  }
+
   /** Requests to `/v1/<name>`, optionally narrowed by method. */
-  calls(name: 'chains' | 'tokens' | 'balances', method?: string): ApiRequest[] {
+  calls(name: 'chains' | 'tokens' | 'balances' | 'quotes', method?: string): ApiRequest[] {
     return this.requests.filter(
       (r) => r.path === `/v1/${name}` && (method === undefined || r.method === method),
     );
@@ -191,6 +346,9 @@ export class MockApi {
     if (req.path === '/v1/balances' && req.method === 'POST') {
       const body = req.body as { chain: ChainKey; address: string };
       return { json: balancesAnswer(body.chain, body.address, BALANCES[body.chain]) };
+    }
+    if (req.path === '/v1/quotes' && req.method === 'POST') {
+      return quoteReply(req.body, this.quoteSettings);
     }
     return { status: 404, json: { error: 'not_found' } };
   }

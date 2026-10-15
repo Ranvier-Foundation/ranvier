@@ -1,4 +1,5 @@
 import type { ChainKey } from '@ranvier/types';
+import { parseQuote, parseQuoteError, type ApiQuote, type QuoteAsk } from './quote';
 import {
   parseBalances,
   parseChains,
@@ -19,12 +20,17 @@ export type ApiErrorKind = 'unconfigured' | 'network' | 'timeout' | 'http' | 'co
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number | undefined;
-  constructor(kind: ApiErrorKind, status?: number) {
+  /** A stable error code from a closed set the caller allows (never text from the API). */
+  readonly code: string | undefined;
+  constructor(kind: ApiErrorKind, status?: number, code?: string) {
     // Fixed text only: a response body, URL or address never ends up in an error message.
-    super(`API request failed: ${kind}${status === undefined ? '' : ` ${status}`}`);
+    super(
+      `API request failed: ${kind}${status === undefined ? '' : ` ${status}`}${code === undefined ? '' : ` ${code}`}`,
+    );
     this.name = 'ApiError';
     this.kind = kind;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -70,12 +76,34 @@ async function readCapped(res: Response, maxChars: number): Promise<string> {
   return out;
 }
 
+/** Longest error answer read (they are a few dozen bytes; a `no_route` lists the providers). */
+const MAX_ERROR_CHARS = 8_192;
+
+async function errorCode(
+  res: Response,
+  parseError: ((json: unknown) => string | undefined) | undefined,
+): Promise<string | undefined> {
+  if (!parseError) return undefined;
+  const type = res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  if (type !== 'application/json') return undefined;
+  try {
+    return parseError(JSON.parse(await readCapped(res, MAX_ERROR_CHARS)));
+  } catch {
+    return undefined;
+  }
+}
+
 interface Request<T> {
   method: 'GET' | 'POST';
   path: string;
   query?: Record<string, string>;
   body?: unknown;
   parse: (json: unknown) => T;
+  /**
+   * Reads the stable code out of an error answer (a non-200 JSON body, capped like any answer).
+   * It returns a code from a closed set or `undefined`; nothing else of the body is kept.
+   */
+  parseError?: (json: unknown) => string | undefined;
   /** Aborts the request. A caller that aborts gets the `AbortError` back, never an `ApiError`. */
   signal: AbortSignal;
 }
@@ -106,7 +134,9 @@ async function request<T>(opts: ApiClientOptions, req: Request<T>): Promise<T> {
       // Balances are per wallet: never from a browser cache. Lists use the API's cache headers.
       cache: req.method === 'POST' ? 'no-store' : 'default',
     });
-    if (res.status !== 200) throw new ApiError('http', res.status);
+    if (res.status !== 200) {
+      throw new ApiError('http', res.status, await errorCode(res, req.parseError));
+    }
     const type = res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
     if (type !== 'application/json') throw new ApiError('content');
     const body = await readCapped(res, MAX_RESPONSE_CHARS);
@@ -165,6 +195,33 @@ export function fetchBalances(
     path: '/v1/balances',
     body: { chain, address },
     parse: (json) => parseBalances(json, chain, address),
+    signal,
+  });
+}
+
+/**
+ * Asks for a quote. The wallet address (`taker`) is in the POST body only, never in a URL, and the
+ * answer is never cached. Only the tokens' `{ chain, address }`, the amount, the taker and the
+ * slippage are sent (the API refuses anything else). The answer is parsed for display and checked
+ * against what was asked (ADR 0011); an error answer carries only a stable code.
+ */
+export function fetchQuote(
+  ask: QuoteAsk,
+  signal: AbortSignal,
+  opts: ApiClientOptions = {},
+): Promise<ApiQuote> {
+  return request(opts, {
+    method: 'POST',
+    path: '/v1/quotes',
+    body: {
+      sellToken: { chain: ask.sellToken.chain, address: ask.sellToken.address },
+      buyToken: { chain: ask.buyToken.chain, address: ask.buyToken.address },
+      sellAmount: ask.sellAmount.toString(),
+      taker: ask.taker,
+      slippageBps: ask.slippageBps,
+    },
+    parse: (json) => parseQuote(json, ask),
+    parseError: parseQuoteError,
     signal,
   });
 }

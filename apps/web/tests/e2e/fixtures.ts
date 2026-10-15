@@ -157,6 +157,7 @@ export const test = base.extend<Fixtures>({
           ACCOUNT_A,
           ACCOUNT_B,
           ...api.calls('balances').map((r) => (r.body as { address?: unknown } | null)?.address),
+          ...api.calls('quotes').map((r) => (r.body as { taker?: unknown } | null)?.taker),
         ]
           .filter((a): a is string => typeof a === 'string')
           .map((a) => a.toLowerCase().replace(/^0x/, '')),

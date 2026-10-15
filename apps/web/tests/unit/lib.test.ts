@@ -70,11 +70,12 @@ describe('fee copy comes from FEE_SCHEDULE', () => {
 });
 
 describe('defaults come from the registry', () => {
-  it('pairs the native coin on Ethereum with a stablecoin on Base', () => {
+  it('pairs the native coin on Ethereum with a stablecoin on the same chain', () => {
     const { pay, receive } = defaultPair();
     expect(pay.chain).toBe(getChain('evm:1'));
     expect(pay.symbol).toBe('ETH');
-    expect(receive.chain).toBe(getChain('evm:8453'));
+    // One chain: the API quotes same-chain swaps only (ADR 0004).
+    expect(receive.chain).toBe(pay.chain);
     expect(receive.symbol).toBe('USDC');
   });
   it('uses the first registry chain as the default network', () => {

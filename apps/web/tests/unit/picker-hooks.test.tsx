@@ -55,6 +55,7 @@ const chain = (key: ChainKey, name: string, balances = true): ApiChain => ({
   family: 'evm',
   nativeSymbol: 'ETH',
   balances,
+  quoting: true,
 });
 const ETHEREUM = chain('evm:1', 'Ethereum');
 const BASE = chain('evm:8453', 'Base');

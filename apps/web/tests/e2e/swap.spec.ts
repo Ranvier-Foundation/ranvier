@@ -79,7 +79,7 @@ test.describe('swap screen at 1440x900: geometry and computed styles', () => {
       });
     }
     await expect(page.locator('label[for=pay]')).toHaveText('Pay on Ethereum');
-    await expect(page.locator('label[for=receive]')).toHaveText('Receive on Base');
+    await expect(page.locator('label[for=receive]')).toHaveText('Receive on Ethereum');
   });
 
   test('hairline is 1px in the line colour', async ({ page }) => {
@@ -113,8 +113,8 @@ test.describe('swap screen at 1440x900: geometry and computed styles', () => {
 
   test('token names and receive amount: 36px / 400 in sub', async ({ page }) => {
     for (const el of [
-      page.getByRole('link', { name: 'Pay token: ETH, change' }),
-      page.getByRole('link', { name: 'Receive token: USDC, change' }),
+      page.getByRole('button', { name: 'Pay token: ETH, change' }),
+      page.getByRole('button', { name: 'Receive token: USDC, change' }),
       page.locator('#receive'),
     ]) {
       const s = await styles(el, ['font-size', 'font-weight', 'color', 'font-variant-numeric']);
