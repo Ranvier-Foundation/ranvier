@@ -315,13 +315,15 @@ contract HarnessFeeWrapperTest is HarnessFixture {
         attacker.swap(q, sig, data);
     }
 
-    /// The wrapper approves the router it calls. Without that approval the holder cannot pull.
+    /// The wrapper approves the router it calls. A caller that has not approved the holder (here
+    /// the test contract, holding the input) cannot be pulled from.
     function test_d_unapprovedHolder_cannotPull() public {
-        // A second wrapper-like caller that never approves the holder: call the holder directly.
         m.husdc.mint(address(this), 10e6);
-        bytes memory data = _zeroX(address(m.husdc), 10e6, address(m.hweth), address(this), 1);
+        bytes memory inner = abi.encodeCall(
+            MockSettler.execute,
+            (MockSettler.AllowedSlippage(address(this), address(m.hweth), 1), new bytes[](0), bytes32(0))
+        );
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, m.holder, 0, 10e6));
-        (bool ok,) = address(m.holder).call(data);
-        ok;
+        m.holder.exec(address(m.settler), address(m.husdc), 10e6, payable(address(m.settler)), inner);
     }
 }
