@@ -117,11 +117,30 @@ export function balancesAnswer(
 }
 
 /** What the stand-in quote answer is made of. All of it is test data, not a model of the real API. */
+/** The fields of the chain and timing echo (ADR 0012) a test may replace or remove. */
+export type EchoField = 'sellChain' | 'buyChain' | 'chainId' | 'serverTime' | 'ttlSeconds';
+
 export interface QuoteSettings {
-  /** Seconds the signed quote is valid for, counted from the moment the mock answers. */
+  /**
+   * Seconds the signed quote is valid for, counted from the moment the mock answers: `ttlSeconds`
+   * in the answer, and `deadline == serverTime + ttlSeconds`. The real API accepts 10 to 600; the
+   * web refuses anything else, so a test of a shorter value is a test of that refusal.
+   */
   ttlSec: number;
-  /** Added to the deadline: a device clock that is behind (positive) or ahead (negative) of the API's. */
-  deadlineSkewSec?: number;
+  /**
+   * How far the API's clock is ahead of the browser's (negative: behind), in seconds. `serverTime`
+   * and the deadline move with it, as they do on the real API: a device clock that is behind the
+   * API's is a positive number.
+   */
+  serverClockAheadSec?: number;
+  /**
+   * Replaces one echoed field with any value (`undefined` removes it) on a signed swap and on a
+   * direct wrap, whichever the answer is. Applied after the answer is built, so the signed deadline
+   * still equals the untampered `serverTime + ttlSeconds`; use `deadlineOffsetSec` to move that.
+   */
+  echo?: Partial<Record<EchoField, unknown>>;
+  /** Added to the signed deadline only, so it no longer equals `serverTime + ttlSeconds`. */
+  deadlineOffsetSec?: number;
   /** How many routes the answer says it compared. */
   routes: number;
   /** The wallet has never swapped: the first $1,000 is free. */
@@ -150,6 +169,21 @@ const PRICE_CENTS: Record<string, bigint> = {
 };
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+/** The numeric chain ID of a key such as `evm:8453` (the mock only knows EVM chains). */
+function chainIdOf(key: ChainKey): number {
+  const id = /^evm:(\d+)$/.exec(key)?.[1];
+  if (id === undefined) throw new Error(`the mock does not know chain ${key}`);
+  return Number(id);
+}
+
+/** Applies the test's replacements of echoed fields: a listed field is replaced, `undefined` removes it. */
+function tamperEcho(answer: Record<string, unknown>, echo: QuoteSettings['echo']): void {
+  for (const [field, value] of Object.entries(echo ?? {})) {
+    if (value === undefined) Reflect.deleteProperty(answer, field);
+    else answer[field] = value;
+  }
+}
+
 function tokenOf(t: { chain: ChainKey; address: string }): TokenFixture {
   const found = TOKENS[t.chain]?.find((x) => x.address === t.address);
   if (!found) throw new Error(`the mock does not know ${t.address} on ${t.chain}`);
@@ -173,23 +207,30 @@ export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
     body.sellToken.chain === body.buyToken.chain &&
     ((sell.address === 'native' && buy.symbol === 'WETH') ||
       (buy.address === 'native' && sell.symbol === 'WETH'));
+  const chainEcho = {
+    sellChain: body.sellToken.chain,
+    buyChain: body.buyToken.chain,
+    chainId: chainIdOf(body.sellToken.chain),
+  };
   if (wrapPair) {
     const wrap = sell.address === 'native';
-    return {
-      json: {
-        fee: { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0' },
-        direct: {
-          kind: wrap ? 'wrap' : 'unwrap',
-          transaction: {
-            to: WETH_ETHEREUM,
-            data: '0xd0e30db0',
-            value: wrap ? body.sellAmount : '0',
-          },
-          buyAmount: body.sellAmount,
-          minBuyAmount: body.sellAmount,
+    const direct: Record<string, unknown> = {
+      fee: { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0' },
+      direct: {
+        kind: wrap ? 'wrap' : 'unwrap',
+        transaction: {
+          to: WETH_ETHEREUM,
+          data: '0xd0e30db0',
+          value: wrap ? body.sellAmount : '0',
         },
+        buyAmount: body.sellAmount,
+        minBuyAmount: body.sellAmount,
       },
+      ...chainEcho,
     };
+    tamperEcho(direct, settings.echo);
+    settings.tamper?.(direct);
+    return { json: direct };
   }
   const sellPrice = PRICE_CENTS[sell.symbol] ?? 100n;
   const buyPrice = PRICE_CENTS[buy.symbol] ?? 100n;
@@ -211,8 +252,9 @@ export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
     (net * sellPrice * 10n ** BigInt(buy.decimals)) / (10n ** BigInt(sell.decimals) * buyPrice);
   const minBuyAmount = (buyAmount * 9_950n + 9_999n) / 10_000n;
   const buyAmountUsd = (buyAmount * buyPrice) / 10n ** BigInt(buy.decimals);
-  const deadline =
-    Math.floor(Date.now() / 1000) + settings.ttlSec + (settings.deadlineSkewSec ?? 0);
+  // The API reads its clock once; the signed deadline is that reading plus the lifetime.
+  const serverTime = Math.floor(Date.now() / 1000) + (settings.serverClockAheadSec ?? 0);
+  const deadline = serverTime + settings.ttlSec + (settings.deadlineOffsetSec ?? 0);
   const best = {
     provider: '0x',
     buyAmount: buyAmount.toString(),
@@ -259,7 +301,11 @@ export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
       signature: '0xSIGNATUREDONOTKEEP',
       transaction: { to: '0xFEEWRAPPER', data: '0xSIGNEDSWAPCALLDATA', value: '0' },
     },
+    ...chainEcho,
+    serverTime,
+    ttlSeconds: settings.ttlSec,
   };
+  tamperEcho(answer, settings.echo);
   settings.tamper?.(answer);
   return { json: answer };
 }
