@@ -160,6 +160,8 @@
   --container-panel: 640px;
   /* Select token modal (canvas: 560 px; modals run 520 to 640). */
   --container-picker: 560px;
+  /* Rates and fees panel under the swap button (canvas: the 320 px rate popover). */
+  --container-popover: 320px;
 
   /* Radii: containers are square, everything pressable is a pill, avatars are round. */
   --radius-none: 0px;

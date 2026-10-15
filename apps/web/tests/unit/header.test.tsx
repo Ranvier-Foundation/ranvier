@@ -39,7 +39,7 @@ describe('Header', () => {
 
 describe('Swap CTA', () => {
   it('signed out it is the Connect wallet button', () => {
-    const html = render(<SwapCta />);
+    const html = render(<SwapCta state={{ kind: 'connect' }} onRefresh={() => {}} />);
     expect(html).toContain('Connect wallet');
     expect(html).not.toContain('disabled');
   });
