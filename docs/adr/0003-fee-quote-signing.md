@@ -10,7 +10,8 @@ The fee wrapper only accepts fees signed by the backend (spec section 4), so the
 ## Decision
 
 - The API signs an EIP-712 `SwapQuote` (domain `Ranvier FeeWrapper`, version `1`, chain ID, wrapper address) for the best route and returns the full `swap(quote, signature, routerCalldata)` transaction.
-- The quote binds the user, tokens, gross input, exact fee amount, minimum output, router, router calldata hash, a random 256-bit nonce and a deadline (default 60 seconds).
+- The quote binds the user, tokens, gross input, exact fee amount, minimum output, router, router calldata hash, a random 256-bit nonce and a deadline (`QUOTE_TTL_SECONDS`, default 60 seconds, allowed 10 to 600).
+- The answer echoes, outside the signed struct, the chain it was signed for (`sellChain`, `buyChain`, the EIP-712 `chainId`) and its timing (`serverTime`, `ttlSeconds`, with `deadline == serverTime + ttlSeconds`); a direct wrap echoes the chain. See ADR 0012.
 - Random nonces need no storage; the contract rejects reuse per user.
 - Signing sits behind a `QuoteSigner` port. `LocalKeySigner` (key from the environment) is for development, testnets and local forks only. It refuses to start when `NODE_ENV=production`, and it only signs for an explicit allowlist of testnet and local chain IDs; mainnets are never signable (ADR 0004). Production uses a KMS/HSM signer, with the key rotated through the admin multisig: `KmsSigner` on AWS KMS (ADR 0005).
 - Only routes that pass `vetRoute` are signed. That function checks the router calldata, the minimum output and the oracle bound (ADR 0004).
