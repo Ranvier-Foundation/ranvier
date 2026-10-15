@@ -31,6 +31,8 @@ forge script script/Deploy.s.sol \
 
 `--interactive` prompts for the deployer key so it never lands in shell history. The script prints the wrapper address. Keep the salt: the same salt and constructor arguments give the same address on other chains.
 
+Before anything is broadcast, the script refuses a published development address in any role or as an initial router: the anvil and Hardhat test accounts, `address(0)`, `0x…01`, `0x…02` and the CREATE2 factory. It fails with `PublishedDevAddress(<role>, <address>)`. Use the fresh keys from step 1.
+
 ## 3. Check
 
 ```sh
@@ -49,6 +51,6 @@ Limitation: the API signs only routes whose AllowanceHolder target is a trusted 
 
 ## Mainnet differences
 
-- Owner is the admin multisig behind a timelock, guardian the guardian multisig, collector the fee-collector Safe. Do not set `INITIAL_ROUTERS`; the multisig allowlists routers.
+- Owner is the admin multisig behind a timelock, guardian the guardian multisig, collector the fee-collector Safe. Do not set `INITIAL_ROUTERS`; the multisig allowlists routers. On chains 1, 8453 and 42161 the script refuses `INITIAL_ROUTERS` (`InitialRoutersRefused`).
 - The fee signer is an AWS KMS key, not a local key: set it up with [kms-setup.md](kms-setup.md) and use the address its smoke test prints as `FEE_SIGNER`. The API runs with `KMS_KEY_ID` (the full key ARN), `KMS_EXPECTED_SIGNER_ADDRESS` (the same address as `FEE_SIGNER`) and `AWS_REGION`, and without `QUOTE_SIGNER_PRIVATE_KEY`; the signer address must never hold funds or be used for anything else; only a KMS signer may sign for mainnets, and only on chains with trusted routers (ADR 0005).
 - Two independent audits first (spec section 9).
