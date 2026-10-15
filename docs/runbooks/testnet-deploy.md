@@ -22,7 +22,17 @@ export FEE_COLLECTOR=<deployer address>
 export GUARDIAN_ADDRESS=<deployer address>
 export FEE_SIGNER=<fee signer address>
 export INITIAL_ROUTERS=0x0000000000001fF3684f28c67538d4D072C22734   # 0x AllowanceHolder
+```
 
+Before you run the script with `--broadcast`, confirm the RPC is the network you intend:
+
+```sh
+cast chain-id --rpc-url https://sepolia.base.org   # must print 84532
+```
+
+Never deploy to chain ID 31337 outside the local harness. The role guard below is skipped on 31337 by design (the harness uses the published test accounts there), and 31337 is not a reserved ID: any node, including a fork of a real network, can report it.
+
+```sh
 forge script script/Deploy.s.sol \
   --rpc-url https://sepolia.base.org \
   --interactive --broadcast \
@@ -31,31 +41,23 @@ forge script script/Deploy.s.sol \
 
 `--interactive` prompts for the deployer key so it never lands in shell history. Keep the salt: the same salt and constructor arguments give the same address on other chains.
 
-Before you add `--broadcast`, confirm the RPC is the network you intend:
-
-```sh
-cast chain-id --rpc-url https://sepolia.base.org   # must print 84532
-```
-
-Never deploy to chain ID 31337 outside the local harness. The role guard below is skipped on 31337 by design (the harness uses the published test accounts there), and 31337 is not a reserved ID: any node, including a fork of a real network, can report it.
-
 Before anything is broadcast, the script refuses a published development address in any role or as an initial router: the first 30 anvil and Hardhat test accounts, every address up to `0x…01ff` (`address(0)` and the precompiles, including P256 at `0x…0100`), the CREATE2 factory, forge's default sender and default test contract, and the burn addresses `0x…dEaD` and `0xdEAD…2069`. It fails with `PublishedDevAddress(<role>, <address>)`. Use the fresh keys from step 1.
 
 `INITIAL_ROUTERS` is a comma-separated address list. Unset or empty means no routers. It may be non-empty only on Base Sepolia (84532), Sepolia (11155111), Arbitrum Sepolia (421614) and the local chain 31337; on any other chain ID, mainnet or unknown, the script fails with `InitialRoutersRefused(<chainId>)`. A malformed value (an empty item, a trailing comma, a wrong-length or non-hex address) stops the script instead of being read as "no routers", and a duplicate entry fails with `DuplicateInitialRouter(<address>)`.
 
 ### Take the wrapper address from the broadcast file, not the log
 
-On some chain IDs forge sends the deploy as a plain `CREATE` from the deployer, while the script still logs the CREATE2 address it computed. This was observed with `anvil --chain-id 84532` and in the fork evidence of ADR 0013. The logged address can then be empty. After broadcasting:
+On some chain IDs forge sends the deploy as a plain `CREATE` from the deployer, while the script still logs the CREATE2 address it computed. This was observed with `anvil --chain-id 84532` and in the fork evidence of ADR 0013. The logged address is then empty, the wrapper lands at a nonce-based address, and the `INITIAL_ROUTERS` calls go to the empty logged address, so no router is allowlisted on the real wrapper. After broadcasting:
 
 ```sh
-jq -r '.transactions[] | select(.contractName == "FeeWrapper") | .contractAddress' \
+jq -r '.transactions[] | select(.transactionType == "CREATE" or .transactionType == "CREATE2") | .contractAddress' \
   broadcast/Deploy.s.sol/84532/run-latest.json
 W=<that address>
 cast code $W --rpc-url https://sepolia.base.org                    # must not be 0x
 cast call $W 'eip712Domain()' --rpc-url https://sepolia.base.org   # must answer
 ```
 
-Never copy the address from the script's log.
+Never copy the address from the script's log. Then run step 3: if `isRouterAllowed` is false, allowlist the router on `$W` with `setRouter` from the owner.
 
 ## 3. Check
 
