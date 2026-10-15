@@ -41,7 +41,13 @@ export function swapAnswer(over: { fee?: Json; best?: Json; quote?: Json; top?: 
     ...over.best,
   };
   return {
-    fee: { bps: 20, reason: 'tier-under-10k', amount: '100000000000000', waivedUsd: '0', ...over.fee },
+    fee: {
+      bps: 20,
+      reason: 'tier-under-10k',
+      amount: '100000000000000',
+      waivedUsd: '0',
+      ...over.fee,
+    },
     best,
     quotes: [best, best],
     failures: [{ provider: '1inch', error: 'timeout' }],
@@ -60,7 +66,11 @@ export function swapAnswer(over: { fee?: Json; best?: Json; quote?: Json; top?: 
         ...over.quote,
       },
       signature: '0xSIGNATUREDONOTKEEP',
-      transaction: { to: '0xFEEWRAPPERADDRESS', data: '0xSIGNEDSWAPCALLDATA', value: '50000000000000000' },
+      transaction: {
+        to: '0xFEEWRAPPERADDRESS',
+        data: '0xSIGNEDSWAPCALLDATA',
+        value: '50000000000000000',
+      },
     },
     ...over.top,
   };

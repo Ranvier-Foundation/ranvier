@@ -96,8 +96,7 @@ const wrap = (): WrapQuote => ({
   fee: { bps: 0, reason: 'wrap-unwrap', amount: 0n, waivedUsdCents: 0n },
 });
 /** A quote valid for `lifetimeSec` from the fake device's now. */
-const fresh = (buy: bigint, lifetimeSec = 60) =>
-  swap(buy, clockState.c.wall / 1000 + lifetimeSec);
+const fresh = (buy: bigint, lifetimeSec = 60) => swap(buy, clockState.c.wall / 1000 + lifetimeSec);
 
 const ask = (amount: bigint, taker = TAKER): QuoteAsk => ({ ...ASK, sellAmount: amount, taker });
 type Props = { ask: QuoteAsk | null };
@@ -110,8 +109,7 @@ async function advance(ms: number) {
     await vi.advanceTimersByTimeAsync(ms);
   });
 }
-const start = (a: QuoteAsk | null) =>
-  renderHook<Props, ReturnType<typeof hook>>(hook, { ask: a });
+const start = (a: QuoteAsk | null) => renderHook<Props, ReturnType<typeof hook>>(hook, { ask: a });
 /** The tab is hidden or shown (inside `act`, as React needs for the state it sets). */
 const show = (state: 'visible' | 'hidden') => act(async () => clockState.d.set(state));
 /** Waits out the typing pause. */
@@ -158,7 +156,9 @@ describe('useQuote: when it asks', () => {
     await run.rerender({ ask: ask(1n, TAKER.toLowerCase()) });
     await pause();
     expect(pending.list).toHaveLength(1);
-    expect(quoteKey(ask(1n, TAKER))).toBe(quoteKey(ask(1n, TAKER.toUpperCase().replace('0X', '0x'))));
+    expect(quoteKey(ask(1n, TAKER))).toBe(
+      quoteKey(ask(1n, TAKER.toUpperCase().replace('0X', '0x'))),
+    );
     await run.unmount();
   });
 

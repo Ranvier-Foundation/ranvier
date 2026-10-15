@@ -173,11 +173,14 @@ export function useQuote(ask: QuoteAsk | null, options: UseQuoteOptions = {}): U
       clearTimeout(timer);
       if (expiry === null) return;
       const current = expiry;
-      timer = setTimeout(() => {
-        if (session.signal.aborted) return;
-        if (msLeft(current, clock) > 0) arm();
-        else expire();
-      }, msLeft(current, clock));
+      timer = setTimeout(
+        () => {
+          if (session.signal.aborted) return;
+          if (msLeft(current, clock) > 0) arm();
+          else expire();
+        },
+        msLeft(current, clock),
+      );
     };
 
     // A hidden tab's timers are throttled and a sleeping device's monotonic clock may pause: look

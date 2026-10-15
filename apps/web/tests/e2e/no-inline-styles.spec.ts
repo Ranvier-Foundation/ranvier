@@ -134,7 +134,9 @@ for (const { width, height } of WIDTHS) {
         .getByRole('dialog', { name: 'Connect wallet' })
         .getByRole('button', { name: new RegExp(DEFAULT_WALLET.name) })
         .click();
-      await expect(page.getByRole('banner').getByRole('button', { name: /^Wallet 0x/ })).toBeVisible();
+      await expect(
+        page.getByRole('banner').getByRole('button', { name: /^Wallet 0x/ }),
+      ).toBeVisible();
       const main = page.getByRole('main');
       await page.locator('#pay').fill('0.05');
       await expectNoInlineStyles(page);

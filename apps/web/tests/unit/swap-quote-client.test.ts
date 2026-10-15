@@ -66,9 +66,9 @@ describe('fetchQuote: what is sent', () => {
 
   it('makes no request without an API origin', async () => {
     const { impl, calls } = fakeFetch(() => json(swapAnswer()));
-    await expect(
-      fetchQuote(ASK, never, { origin: '', fetch: impl }),
-    ).rejects.toMatchObject({ kind: 'unconfigured' });
+    await expect(fetchQuote(ASK, never, { origin: '', fetch: impl })).rejects.toMatchObject({
+      kind: 'unconfigured',
+    });
     expect(calls).toHaveLength(0);
   });
 });
@@ -100,7 +100,11 @@ describe('fetchQuote: what comes back', () => {
   });
 
   it.each([
-    ['text/html', () => new Response('{}', { headers: { 'content-type': 'text/html' } }), 'content'],
+    [
+      'text/html',
+      () => new Response('{}', { headers: { 'content-type': 'text/html' } }),
+      'content',
+    ],
     ['no content type', () => new Response('{}'), 'content'],
     [
       'broken JSON',
@@ -131,13 +135,13 @@ describe('fetchQuote: error answers carry a stable code and nothing else', () =>
 
   it.each([
     [502, { error: 'no_route', failures: [{ provider: '0x', error: 'no_liquidity' }] }, 'no_route'],
-    [
-      502,
-      { error: 'no_route', failures: [{ provider: '0x', error: 'timeout' }] },
-      'routing_slow',
-    ],
+    [502, { error: 'no_route', failures: [{ provider: '0x', error: 'timeout' }] }, 'routing_slow'],
     [503, { error: 'price_unavailable' }, 'price_unavailable'],
-    [503, { error: 'routing_unavailable', message: 'No routing providers are configured' }, 'routing_unavailable'],
+    [
+      503,
+      { error: 'routing_unavailable', message: 'No routing providers are configured' },
+      'routing_unavailable',
+    ],
     [503, { error: 'signing_unavailable' }, 'signing_unavailable'],
     [500, { error: 'internal_error' }, 'internal_error'],
     [400, { error: 'invalid_request', fields: ['sellToken.address'] }, 'invalid_request'],
@@ -155,8 +159,14 @@ describe('fetchQuote: error answers carry a stable code and nothing else', () =>
 
   it.each([
     ['an unknown code', failure(503, { error: 'teapot' })],
-    ['a body that is not JSON', () => new Response('<html>', { status: 502, headers: { 'content-type': 'text/html' } })],
-    ['broken JSON', () => new Response('{', { status: 502, headers: { 'content-type': 'application/json' } })],
+    [
+      'a body that is not JSON',
+      () => new Response('<html>', { status: 502, headers: { 'content-type': 'text/html' } }),
+    ],
+    [
+      'broken JSON',
+      () => new Response('{', { status: 502, headers: { 'content-type': 'application/json' } }),
+    ],
     [
       'a huge body',
       () =>
@@ -210,7 +220,9 @@ describe('fetchQuote: aborting and time', () => {
 
   it('a network failure is a fixed-text error', async () => {
     const impl = (() =>
-      Promise.reject(new TypeError(`Failed to fetch https://secret.example/?k=${TAKER}`))) as unknown as typeof fetch;
+      Promise.reject(
+        new TypeError(`Failed to fetch https://secret.example/?k=${TAKER}`),
+      )) as unknown as typeof fetch;
     const err = (await ask(impl).catch((e: unknown) => e)) as ApiError;
     expect(err.kind).toBe('network');
     expect(err.message).not.toContain('secret');

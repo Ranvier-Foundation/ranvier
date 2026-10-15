@@ -75,7 +75,10 @@ describe('pairSupport', () => {
     });
   });
   it('while the chain list loads nothing is decided, and when it failed the quote itself decides', () => {
-    expect(pairSupport(pay, receive, { status: 'loading' })).toEqual({ ok: false, reason: 'loading' });
+    expect(pairSupport(pay, receive, { status: 'loading' })).toEqual({
+      ok: false,
+      reason: 'loading',
+    });
     expect(pairSupport(pay, receive, { status: 'error', kind: 'network' })).toEqual({ ok: true });
   });
 });
@@ -84,14 +87,24 @@ describe('ctaState: every state of the button, in order', () => {
   const quotes: [string, QuoteState, CtaState][] = [
     ['idle', { status: 'idle' }, { kind: 'fetching', after: 'change' }],
     ['loading', { status: 'loading', after: 'change' }, { kind: 'fetching', after: 'change' }],
-    ['replacing an expired quote', { status: 'loading', after: 'expiry' }, { kind: 'fetching', after: 'expiry' }],
+    [
+      'replacing an expired quote',
+      { status: 'loading', after: 'expiry' },
+      { kind: 'fetching', after: 'expiry' },
+    ],
     ['expired', { status: 'expired' }, { kind: 'expired' }],
     ['error', { status: 'error', kind: 'no_route' }, { kind: 'error', error: 'no_route' }],
     [
       'ready',
       {
         status: 'ready',
-        quote: { kind: 'wrap', direction: 'wrap', buyAmount: 1n, minBuyAmount: 1n, fee: { bps: 0, reason: 'wrap-unwrap', amount: 0n, waivedUsdCents: 0n } },
+        quote: {
+          kind: 'wrap',
+          direction: 'wrap',
+          buyAmount: 1n,
+          minBuyAmount: 1n,
+          fee: { bps: 0, reason: 'wrap-unwrap', amount: 0n, waivedUsdCents: 0n },
+        },
         expiry: null,
       },
       { kind: 'review' },
@@ -102,7 +115,9 @@ describe('ctaState: every state of the button, in order', () => {
   });
 
   it('not connected: connect, whatever else is wrong', () => {
-    expect(ctaState(input({ connected: false, amount: { kind: 'empty' } }))).toEqual({ kind: 'connect' });
+    expect(ctaState(input({ connected: false, amount: { kind: 'empty' } }))).toEqual({
+      kind: 'connect',
+    });
     expect(ctaState(input({ connected: false, pay: null }))).toEqual({ kind: 'connect' });
   });
   it('a side without a token: select a token', () => {
@@ -126,7 +141,9 @@ describe('ctaState: every state of the button, in order', () => {
     expect(ctaState(input({ amount }))).toEqual({ kind: 'enter-amount' });
   });
   it('a huge amount is too large', () => {
-    expect(ctaState(input({ amount: { kind: 'too_large' } }))).toEqual({ kind: 'amount-too-large' });
+    expect(ctaState(input({ amount: { kind: 'too_large' } }))).toEqual({
+      kind: 'amount-too-large',
+    });
   });
   it('a balance below the amount says so, before the quote is looked at', () => {
     expect(ctaState(input({ insufficient: true }))).toEqual({ kind: 'insufficient-balance' });
@@ -162,9 +179,9 @@ describe('quoteAsk: balances never decide whether a quote is asked for', () => {
     const withLowBalance = ctaState(input({ insufficient: true }));
     expect(withLowBalance).toEqual({ kind: 'insufficient-balance' });
     expect(asked()).toEqual(a);
-    expect(Object.keys({ taker: TAKER, pay, receive, pair: { ok: true }, amount: ok() })).not.toContain(
-      'balance',
-    );
+    expect(
+      Object.keys({ taker: TAKER, pay, receive, pair: { ok: true }, amount: ok() }),
+    ).not.toContain('balance');
   });
   it.each([
     ['no wallet', { taker: undefined }],
@@ -209,7 +226,13 @@ describe('button labels and notes: every state has copy in the message file', ()
     { kind: 'review' },
     ...errors.map((error): CtaState => ({ kind: 'error', error })),
   ];
-  const ctx = { payChain: 'Ethereum', receiveChain: 'Base', balance: '0.0841', paySymbol: 'ETH', unknownToken: false };
+  const ctx = {
+    payChain: 'Ethereum',
+    receiveChain: 'Base',
+    balance: '0.0841',
+    paySymbol: 'ETH',
+    unknownToken: false,
+  };
 
   it.each(states.map((s) => [JSON.stringify(s), s] as const))('%s', (_n, state) => {
     expect(Object.keys(en)).toContain(ctaLabelId(state));
@@ -230,7 +253,15 @@ describe('button labels and notes: every state has copy in the message file', ()
   });
   it('errors that a retry can fix offer one, the others do not', () => {
     const retry = (error: QuoteErrorKind) => ctaNote({ kind: 'error', error }, ctx)?.action;
-    for (const e of ['routing_slow', 'price_unavailable', 'network', 'offline', 'timeout', 'unavailable', 'clock'] as const) {
+    for (const e of [
+      'routing_slow',
+      'price_unavailable',
+      'network',
+      'offline',
+      'timeout',
+      'unavailable',
+      'clock',
+    ] as const) {
       expect(retry(e), e).toBe('retry');
     }
     expect(retry('no_route')).toBeUndefined();
@@ -258,7 +289,10 @@ describe('copy has no typed numbers or promises', () => {
     expect(text.replaceAll('1 {', '{'), id).not.toMatch(/\d|%|\$/);
   });
   it('the fee and tier texts are filled from the schedule, not typed', () => {
-    for (const id of ['swap.details.fee.reason.tier', 'swap.details.fee.reason.first-swap-promo'] as const) {
+    for (const id of [
+      'swap.details.fee.reason.tier',
+      'swap.details.fee.reason.first-swap-promo',
+    ] as const) {
       expect(en[id]).toMatch(/\{\w+\}/);
     }
   });

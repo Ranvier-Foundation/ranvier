@@ -61,15 +61,7 @@ function headingText(side: Side, view: SwapPanelView): string {
 }
 
 /** "Pay on Ethereum": the chain name opens the token picker (a link to the route when static). */
-function RowHeading({
-  htmlFor,
-  side,
-  view,
-}: {
-  htmlFor: string;
-  side: Side;
-  view: SwapPanelView;
-}) {
+function RowHeading({ htmlFor, side, view }: { htmlFor: string; side: Side; view: SwapPanelView }) {
   const { chain } = view[side];
   if (chain === undefined) {
     return (

@@ -45,7 +45,9 @@ describe('parseAmount: exact string maths', () => {
   it('never loses a digit that a float would: 0.1 + 0.2 sized inputs, 18 decimals, 2^53 and beyond', () => {
     expect(ok('0.3', 18)).toBe(300_000_000_000_000_000n);
     expect(ok('9007199254740993', 0)).toBe(9007199254740993n); // 2^53 + 1
-    expect(ok('9007199254740993.000000000000000001', 18)).toBe(9007199254740993_000000000000000001n);
+    expect(ok('9007199254740993.000000000000000001', 18)).toBe(
+      9007199254740993_000000000000000001n,
+    );
     expect(ok('0.123456789012345678', 18)).toBe(123456789012345678n);
   });
 
@@ -98,12 +100,12 @@ describe('parseAmount: exact string maths', () => {
     expect(parseAmount((MAX_UINT256 + 1n).toString(), 0).kind).toBe('too_large');
     expect(parseAmount('9'.repeat(78), 18).kind).toBe('too_large');
     // 1.157...e77 base units at 18 decimals is 1.157e59 whole tokens.
-    expect(parseAmount('115792089237316195423570985008687907853269984665640564039457', 18).kind).toBe(
-      'ok',
-    );
-    expect(parseAmount('115792089237316195423570985008687907853269984665640564039458', 18).kind).toBe(
-      'too_large',
-    );
+    expect(
+      parseAmount('115792089237316195423570985008687907853269984665640564039457', 18).kind,
+    ).toBe('ok');
+    expect(
+      parseAmount('115792089237316195423570985008687907853269984665640564039458', 18).kind,
+    ).toBe('too_large');
   });
 });
 

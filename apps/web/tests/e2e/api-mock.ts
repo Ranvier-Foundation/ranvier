@@ -141,7 +141,13 @@ export interface QuoteBody {
 }
 
 /** USD cents of one whole token in the mock's world. */
-const PRICE_CENTS: Record<string, bigint> = { ETH: 250_000n, WETH: 250_000n, USDC: 100n, DAI: 100n, ARB: 100n };
+const PRICE_CENTS: Record<string, bigint> = {
+  ETH: 250_000n,
+  WETH: 250_000n,
+  USDC: 100n,
+  DAI: 100n,
+  ARB: 100n,
+};
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 function tokenOf(t: { chain: ChainKey; address: string }): TokenFixture {
@@ -174,7 +180,11 @@ export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
         fee: { bps: 0, reason: 'wrap-unwrap', amount: '0', waivedUsd: '0' },
         direct: {
           kind: wrap ? 'wrap' : 'unwrap',
-          transaction: { to: WETH_ETHEREUM, data: '0xd0e30db0', value: wrap ? body.sellAmount : '0' },
+          transaction: {
+            to: WETH_ETHEREUM,
+            data: '0xd0e30db0',
+            value: wrap ? body.sellAmount : '0',
+          },
           buyAmount: body.sellAmount,
           minBuyAmount: body.sellAmount,
         },
@@ -193,24 +203,43 @@ export function quoteReply(raw: unknown, settings: QuoteSettings): Reply {
   if (settings.firstSwap) {
     waivedUsd = sellUsd < 100_000n ? sellUsd : 100_000n;
     reason = 'first-swap-promo';
-    feeAmount = sellUsd <= 100_000n ? 0n : (((sellAmount * (sellUsd - 100_000n)) / sellUsd) * bps) / 10_000n;
+    feeAmount =
+      sellUsd <= 100_000n ? 0n : (((sellAmount * (sellUsd - 100_000n)) / sellUsd) * bps) / 10_000n;
   }
   const net = sellAmount - feeAmount;
-  const buyAmount = (net * sellPrice * 10n ** BigInt(buy.decimals)) / (10n ** BigInt(sell.decimals) * buyPrice);
+  const buyAmount =
+    (net * sellPrice * 10n ** BigInt(buy.decimals)) / (10n ** BigInt(sell.decimals) * buyPrice);
   const minBuyAmount = (buyAmount * 9_950n + 9_999n) / 10_000n;
   const buyAmountUsd = (buyAmount * buyPrice) / 10n ** BigInt(buy.decimals);
-  const deadline = Math.floor(Date.now() / 1000) + settings.ttlSec + (settings.deadlineSkewSec ?? 0);
+  const deadline =
+    Math.floor(Date.now() / 1000) + settings.ttlSec + (settings.deadlineSkewSec ?? 0);
   const best = {
     provider: '0x',
     buyAmount: buyAmount.toString(),
     minBuyAmount: minBuyAmount.toString(),
     gasCostUsd: '31',
     buyAmountUsd: buyAmountUsd.toString(),
-    route: [{ protocol: 'Uniswap_V3', from: body.sellToken.address, to: body.buyToken.address, proportionBps: 10_000 }],
-    tx: { to: '0x0000000000001ff3684f28c67538d4d072c22734', data: '0x2213bc0bdeadbeefROUTERCALLDATA', value: '0' },
+    route: [
+      {
+        protocol: 'Uniswap_V3',
+        from: body.sellToken.address,
+        to: body.buyToken.address,
+        proportionBps: 10_000,
+      },
+    ],
+    tx: {
+      to: '0x0000000000001ff3684f28c67538d4d072c22734',
+      data: '0x2213bc0bdeadbeefROUTERCALLDATA',
+      value: '0',
+    },
   };
   const answer: Record<string, unknown> = {
-    fee: { bps: Number(bps), reason, amount: feeAmount.toString(), waivedUsd: waivedUsd.toString() },
+    fee: {
+      bps: Number(bps),
+      reason,
+      amount: feeAmount.toString(),
+      waivedUsd: waivedUsd.toString(),
+    },
     best,
     quotes: Array.from({ length: settings.routes }, () => best),
     failures: [],

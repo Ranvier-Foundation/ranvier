@@ -56,7 +56,8 @@ export function parseAmount(text: string, decimals: number): AmountParse {
   const whole = dot === -1 ? clean : clean.slice(0, dot);
   const fraction = dot === -1 ? '' : clean.slice(dot + 1);
   if (whole === '' && fraction === '') return { kind: 'empty' };
-  const units = BigInt(whole === '' ? '0' : whole) * 10n ** BigInt(decimals) +
+  const units =
+    BigInt(whole === '' ? '0' : whole) * 10n ** BigInt(decimals) +
     BigInt(fraction === '' ? '0' : fraction.padEnd(decimals, '0'));
   if (units === 0n) return { kind: 'zero' };
   if (units > MAX_UINT256) return { kind: 'too_large' };

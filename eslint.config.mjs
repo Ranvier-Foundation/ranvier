@@ -62,27 +62,32 @@ export default tseslint.config(
           message: 'No style prop (strict CSP).',
         },
         {
-          selector: "CallExpression[callee.name=/^(parseFloat|Number)$/]",
-          message: 'No Number() or parseFloat() in a money path: use bigint and exact string maths.',
+          selector: 'CallExpression[callee.name=/^(parseFloat|Number)$/]',
+          message:
+            'No Number() or parseFloat() in a money path: use bigint and exact string maths.',
         },
         {
-          selector: "CallExpression[callee.object.name='Number'][callee.property.name=/^(parseFloat|parseInt)$/]",
+          selector:
+            "CallExpression[callee.object.name='Number'][callee.property.name=/^(parseFloat|parseInt)$/]",
           message: 'No Number.parseFloat() or Number.parseInt() in a money path.',
         },
         {
-          selector: "MemberExpression[property.name=/^(toFixed|toPrecision|toExponential|toLocaleString)$/]",
+          selector:
+            'MemberExpression[property.name=/^(toFixed|toPrecision|toExponential|toLocaleString)$/]',
           message: 'No float formatting in a money path.',
         },
         {
-          selector: "CallExpression[callee.object.name='Math'][callee.property.name=/^(round|floor|ceil|trunc|pow|sqrt|log|log10|exp)$/]",
-          message: 'No Math rounding or powers in a money path: use bigint division and `10n ** n`.',
+          selector:
+            "CallExpression[callee.object.name='Math'][callee.property.name=/^(round|floor|ceil|trunc|pow|sqrt|log|log10|exp)$/]",
+          message:
+            'No Math rounding or powers in a money path: use bigint division and `10n ** n`.',
         },
         {
           selector: "UnaryExpression[operator='+']",
           message: 'No unary plus (a hidden Number conversion) in a money path.',
         },
         {
-          selector: "Literal[raw=/^\\d*\\.\\d+$/]",
+          selector: 'Literal[raw=/^\\d*\\.\\d+$/]',
           message: 'No decimal literal in a money path.',
         },
       ],

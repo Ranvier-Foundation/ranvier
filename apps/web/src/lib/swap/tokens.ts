@@ -63,6 +63,7 @@ export function defaultSwapTokens(): { pay: SwapToken; receive: SwapToken } {
   const payToken = resolveToken({ chain: pay.chain.key, address: 'native' });
   const receiveToken =
     stable === undefined ? undefined : resolveToken({ chain: receive.chain.key, address: stable });
-  if (!payToken || !receiveToken) throw new Error('The default pair is missing from the token list');
+  if (!payToken || !receiveToken)
+    throw new Error('The default pair is missing from the token list');
   return { pay: payToken, receive: receiveToken };
 }

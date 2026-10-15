@@ -82,7 +82,10 @@ describe('parseQuote: a routed swap', () => {
       ['another buy token', { quote: { tokenOut: '0x6b175474e89094c44da98b954eedeac495271d0f' } }],
       ['another sell amount', { quote: { amountIn: '50000000000000001' } }],
       ['a signed fee that differs from the fee shown', { quote: { feeAmount: '1' } }],
-      ['a signed minimum that differs from the one shown', { quote: { minAmountOut: '124126251' } }],
+      [
+        'a signed minimum that differs from the one shown',
+        { quote: { minAmountOut: '124126251' } },
+      ],
     ])('refuses %s', (_name, over) => {
       refuse(swapAnswer(over));
     });
@@ -96,7 +99,10 @@ describe('parseQuote: a routed swap', () => {
 
     it('refuses an answer for another request even when it is internally consistent', () => {
       refuse(swapAnswer(), { ...ASK, sellAmount: 60_000_000_000_000_000n });
-      refuse(swapAnswer(), { ...ASK, buyToken: { chain: 'evm:1', address: '0x' + '1'.repeat(40) } });
+      refuse(swapAnswer(), {
+        ...ASK,
+        buyToken: { chain: 'evm:1', address: '0x' + '1'.repeat(40) },
+      });
     });
   });
 
@@ -116,12 +122,19 @@ describe('parseQuote: a routed swap', () => {
     });
 
     it('refuses an amount other than the rate gives', () => {
-      refuse(swapAnswer({ fee: { amount: '100000000000001' }, quote: { feeAmount: '100000000000001' } }));
+      refuse(
+        swapAnswer({ fee: { amount: '100000000000001' }, quote: { feeAmount: '100000000000001' } }),
+      );
       refuse(swapAnswer({ fee: { amount: '0' }, quote: { feeAmount: '0' } }));
     });
 
     it('refuses a wrap fee reason on a routed swap, and a waiver without the promo reason', () => {
-      refuse(swapAnswer({ fee: { reason: 'wrap-unwrap', bps: 0, amount: '0' }, quote: { feeAmount: '0' } }));
+      refuse(
+        swapAnswer({
+          fee: { reason: 'wrap-unwrap', bps: 0, amount: '0' },
+          quote: { feeAmount: '0' },
+        }),
+      );
       refuse(swapAnswer({ fee: { waivedUsd: '100' } }));
     });
 
@@ -131,7 +144,12 @@ describe('parseQuote: a routed swap', () => {
         quote: { feeAmount: '0' },
       });
       const q = parseQuote(promo, ASK);
-      expect(q.fee).toEqual({ bps: 20, reason: 'first-swap-promo', amount: 0n, waivedUsdCents: 12_475n });
+      expect(q.fee).toEqual({
+        bps: 20,
+        reason: 'first-swap-promo',
+        amount: 0n,
+        waivedUsdCents: 12_475n,
+      });
       // More than the rate allows is refused, and so is a waiver above the cap, or none at all.
       refuse(
         swapAnswer({
@@ -218,7 +236,9 @@ describe('parseQuote: a direct wrap or unwrap', () => {
       minBuyAmount: 50_000_000_000_000_000n,
       fee: { bps: 0, reason: 'wrap-unwrap', amount: 0n, waivedUsdCents: 0n },
     });
-    expect(JSON.stringify(q, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))).not.toContain('d0e30db0');
+    expect(
+      JSON.stringify(q, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v)),
+    ).not.toContain('d0e30db0');
   });
 
   it('unwraps when the wrapped token is sold', () => {
@@ -231,7 +251,10 @@ describe('parseQuote: a direct wrap or unwrap', () => {
     ['an output other than the sell amount', { direct: { buyAmount: '49999999999999999' } }],
     ['a minimum other than the sell amount', { direct: { minBuyAmount: '1' } }],
     ['a kind that is neither', { direct: { kind: 'swap' } }],
-    ['a fee that is not free', { fee: { bps: 20, reason: 'tier-under-10k', amount: '100000000000000' } }],
+    [
+      'a fee that is not free',
+      { fee: { bps: 20, reason: 'tier-under-10k', amount: '100000000000000' } },
+    ],
     ['a free fee with another reason', { fee: { reason: 'stablecoin' } }],
   ])('refuses %s', (_n, over) => refuse(wrapAnswer(over), WRAP_ASK));
 });

@@ -77,7 +77,10 @@ async function pick(page: Page, side: 'pay' | 'receive', symbol: string, chain: 
     .getByRole('button', { name: new RegExp(`^${side === 'pay' ? 'Pay' : 'Receive'} token:`) })
     .click();
   const dialog = pickerDialog(page);
-  await dialog.getByRole('group', { name: 'Filter by chain' }).getByRole('button', { name: chain, exact: true }).click();
+  await dialog
+    .getByRole('group', { name: 'Filter by chain' })
+    .getByRole('button', { name: chain, exact: true })
+    .click();
   await dialog.getByRole('option', { name: new RegExp(`^${symbol},`) }).click();
   await expect(dialog).toBeHidden();
 }
@@ -91,7 +94,10 @@ async function shot(page: Page, name: string, width: number) {
 test.describe('a quote is shown for a typed amount', () => {
   test.beforeEach(async ({ page }) => openConnected(page));
 
-  test('0.05 ETH: receive amount, USD, fee, minimum, route and the button', async ({ page, api }) => {
+  test('0.05 ETH: receive amount, USD, fee, minimum, route and the button', async ({
+    page,
+    api,
+  }) => {
     await ready(page);
     // Mock world: 1 ETH = $2,500, fee 0.2% of the sold amount, so 0.0499 ETH is swapped.
     await expect(receive(page)).toHaveText('124.75');
@@ -108,12 +114,13 @@ test.describe('a quote is shown for a typed amount', () => {
     await expect(details).toContainText('Minimum received124.12 USDC');
     await expect(details).toContainText('Route0x');
     await expect(details).toContainText('The fee is the exact amount signed into this quote.');
-    await expect(details).toContainText('The lowest amount this quote allows, not the amount to expect.');
+    await expect(details).toContainText(
+      'The lowest amount this quote allows, not the amount to expect.',
+    );
     await expect(details).toContainText('1 USDC = 0.0004008 ETH');
     expect(quotes(api)).toHaveLength(1);
   });
 });
-
 
 const SECRETS = [
   'ROUTERCALLDATA',
@@ -198,7 +205,9 @@ test.describe('what is sent and what is kept', () => {
       (answer['best'] as { provider: string }).provider = '<img src=x onerror=alert(1)>';
     };
     await ready(page);
-    await expect(main(page).getByText(/Best of 3 routes via <img src=x onerror=alert\(1\)>/)).toBeVisible();
+    await expect(
+      main(page).getByText(/Best of 3 routes via <img src=x onerror=alert\(1\)>/),
+    ).toBeVisible();
     await expect(page.locator('main img')).toHaveCount(0);
   });
 });
@@ -276,8 +285,12 @@ test.describe('typing an amount', () => {
 
   test('a pay token with 6 decimals ignores the seventh decimal', async ({ page }) => {
     await pick(page, 'pay', 'USDC', 'Ethereum'); // the other side's token: the two swap places
-    await expect(panel(page).getByRole('button', { name: 'Pay token: USDC, change' })).toBeVisible();
-    await expect(panel(page).getByRole('button', { name: 'Receive token: ETH, change' })).toBeVisible();
+    await expect(
+      panel(page).getByRole('button', { name: 'Pay token: USDC, change' }),
+    ).toBeVisible();
+    await expect(
+      panel(page).getByRole('button', { name: 'Receive token: ETH, change' }),
+    ).toBeVisible();
     await amount(page).pressSequentially('0.1234567');
     await expect(amount(page)).toHaveValue('0.123456');
   });
@@ -300,7 +313,9 @@ test.describe('tokens and pairs', () => {
     api,
   }) => {
     await pick(page, 'receive', 'DAI', 'Ethereum');
-    await expect(panel(page).getByRole('button', { name: 'Receive token: DAI, change' })).toBeFocused();
+    await expect(
+      panel(page).getByRole('button', { name: 'Receive token: DAI, change' }),
+    ).toBeFocused();
     await ready(page);
     expect((quotes(api)[0]!.body as { buyToken: unknown }).buyToken).toEqual({
       chain: 'evm:1',
@@ -316,7 +331,9 @@ test.describe('tokens and pairs', () => {
   }) => {
     await ready(page);
     await panel(page).getByRole('button', { name: 'Switch pay and receive' }).click();
-    await expect(panel(page).getByRole('button', { name: 'Pay token: USDC, change' })).toBeVisible();
+    await expect(
+      panel(page).getByRole('button', { name: 'Pay token: USDC, change' }),
+    ).toBeVisible();
     await expect(amount(page)).toHaveValue('124.75');
     await expect.poll(() => quotes(api).length).toBe(2);
     expect(quotes(api)[1]!.body).toMatchObject({
@@ -367,8 +384,12 @@ test.describe('tokens and pairs', () => {
         ],
       };
     });
-    await panel(page).getByRole('button', { name: /^Receive token:/ }).click();
-    await pickerDialog(page).getByRole('option', { name: /^NEWT,/ }).click();
+    await panel(page)
+      .getByRole('button', { name: /^Receive token:/ })
+      .click();
+    await pickerDialog(page)
+      .getByRole('option', { name: /^NEWT,/ })
+      .click();
     await expect(cta(page)).toHaveText('Select a token');
     await expect(note(page)).toContainText('not listed in this version of Ranvier');
     await expect(
@@ -673,7 +694,9 @@ test.describe('balances are display only', () => {
   });
 
   test('a failed balance read blocks nothing', async ({ page, api }) => {
-    api.override((r) => (r.path === '/v1/balances' ? { status: 503, json: { error: 'rpc_unavailable' } } : undefined));
+    api.override((r) =>
+      r.path === '/v1/balances' ? { status: 503, json: { error: 'rpc_unavailable' } } : undefined,
+    );
     await amount(page).fill('1');
     await expect(cta(page)).toHaveText('Review swap');
     expect(api.calls('balances').length).toBeGreaterThanOrEqual(1);
@@ -686,7 +709,9 @@ test.describe('balances are display only', () => {
     expect(api.calls('balances')).toHaveLength(0);
     await amount(page).fill('0.01');
     await expect(cta(page)).toHaveText('Review swap');
-    expect(api.calls('balances').map((r) => (r.body as { chain: string }).chain)).toEqual(['evm:1']);
+    expect(api.calls('balances').map((r) => (r.body as { chain: string }).chain)).toEqual([
+      'evm:1',
+    ]);
   });
 });
 
@@ -695,7 +720,9 @@ test.describe('late answers and changes mid-quote', () => {
     const late = await answersOutliveAbort(page);
     const first = deferred();
     let n = 0;
-    api.override((r) => (r.path === '/v1/quotes' && n++ === 0 ? { gate: first.promise } : undefined));
+    api.override((r) =>
+      r.path === '/v1/quotes' && n++ === 0 ? { gate: first.promise } : undefined,
+    );
     await openConnected(page);
     await amount(page).fill('0.05');
     await expect.poll(() => quotes(api).length).toBe(1);
@@ -717,11 +744,15 @@ test.describe('late answers and changes mid-quote', () => {
     const late = await answersOutliveAbort(page);
     const first = deferred();
     let n = 0;
-    api.override((r) => (r.path === '/v1/quotes' && n++ === 0 ? { gate: first.promise } : undefined));
+    api.override((r) =>
+      r.path === '/v1/quotes' && n++ === 0 ? { gate: first.promise } : undefined,
+    );
     await openConnected(page);
     await amount(page).fill('0.05');
     await expect.poll(() => quotes(api).length).toBe(1);
-    await fake(page, (w) => w.__emit('accountsChanged', ['0x1111111111111111111111111111111111112222']));
+    await fake(page, (w) =>
+      w.__emit('accountsChanged', ['0x1111111111111111111111111111111111112222']),
+    );
     await expect(
       page.getByRole('banner').getByRole('button', { name: 'Wallet 0x1111…2222' }),
     ).toBeVisible();
@@ -737,7 +768,11 @@ test.describe('late answers and changes mid-quote', () => {
     await expect(cta(page)).toHaveText('Review swap');
     await expect(receive(page)).toHaveText('124.75');
     // The first wallet's address never reached the console or a URL (the shared checks also run).
-    expect(api.requests.filter((r) => r.method === 'GET').every((r) => !r.search.includes(WALLET.slice(2)))).toBe(true);
+    expect(
+      api.requests
+        .filter((r) => r.method === 'GET')
+        .every((r) => !r.search.includes(WALLET.slice(2))),
+    ).toBe(true);
   });
 
   test('a wallet disconnected mid-quote: the quote goes, nothing more is asked, a late answer is ignored', async ({
@@ -785,7 +820,9 @@ test.describe('the countdown and expiry', () => {
   test('counts down from the answer, and an expired quote is replaced', async ({ page, api }) => {
     api.quoteSettings.ttlSec = 3;
     await ready(page);
-    const text = await main(page).getByText(/Expires in \d+s/).textContent();
+    const text = await main(page)
+      .getByText(/Expires in \d+s/)
+      .textContent();
     expect(Number(/Expires in (\d+)s/.exec(text ?? '')![1])).toBeLessThanOrEqual(3);
     // Hold the replacement so the "expired" state can be seen.
     const next = deferred();
@@ -806,7 +843,9 @@ test.describe('the countdown and expiry', () => {
   }) => {
     api.quoteSettings.deadlineSkewSec = 3_600; // the deadline looks an hour further away
     await ready(page);
-    const text = await main(page).getByText(/Expires in \d+s/).textContent();
+    const text = await main(page)
+      .getByText(/Expires in \d+s/)
+      .textContent();
     expect(Number(/Expires in (\d+)s/.exec(text ?? '')![1])).toBeLessThanOrEqual(60);
   });
 
@@ -838,11 +877,17 @@ test.describe('the countdown and expiry', () => {
     });
     await amount(page).pressSequentially('0.0123', { delay: 60 });
     await expect(cta(page)).toHaveText('Review swap');
-    await expect(status(page)).toHaveText(/^Quote ready\. You receive 30\.\d\d USDC, at least 30\.\d\d USDC\.$/);
-    const settled = await page.evaluate(() => (window as unknown as { __mutations: number }).__mutations);
+    await expect(status(page)).toHaveText(
+      /^Quote ready\. You receive 30\.\d\d USDC, at least 30\.\d\d USDC\.$/,
+    );
+    const settled = await page.evaluate(
+      () => (window as unknown as { __mutations: number }).__mutations,
+    );
     // Two seconds of countdown later the region has not been touched again.
     await page.waitForTimeout(2_200);
-    expect(await page.evaluate(() => (window as unknown as { __mutations: number }).__mutations)).toBe(settled);
+    expect(
+      await page.evaluate(() => (window as unknown as { __mutations: number }).__mutations),
+    ).toBe(settled);
     expect(settled).toBeLessThanOrEqual(3);
     // The countdown itself sits outside every live region.
     expect(
@@ -852,7 +897,6 @@ test.describe('the countdown and expiry', () => {
     ).toBe(true);
   });
 });
-
 
 test.describe('conformance to the canvas (Web Swap, connected): computed values', () => {
   for (const [w, h] of [
@@ -865,7 +909,9 @@ test.describe('conformance to the canvas (Web Swap, connected): computed values'
       const p = await box(panel(page));
       expect(p.width).toBe(w === 1440 ? 640 : 350);
       expect(p.x).toBe(w === 1440 ? 400 : 20);
-      expect(await styles(panel(page), ['background-color', 'box-shadow', 'border-top-left-radius'])).toEqual({
+      expect(
+        await styles(panel(page), ['background-color', 'box-shadow', 'border-top-left-radius']),
+      ).toEqual({
         'background-color': RGB.surface,
         'box-shadow': 'none',
         'border-top-left-radius': '0px',
@@ -879,23 +925,34 @@ test.describe('conformance to the canvas (Web Swap, connected): computed values'
       await expect(cta(page)).toBeDisabled();
 
       // The quoted amount is the amount style in ink; its token name stays sub (canvas).
-      const out = await styles(receive(page), ['font-size', 'font-weight', 'color', 'font-variant-numeric']);
+      const out = await styles(receive(page), [
+        'font-size',
+        'font-weight',
+        'color',
+        'font-variant-numeric',
+      ]);
       expect(out['font-size']).toBe('36px');
       expect(out['font-weight']).toBe('400');
       expect(out.color).toBe(RGB.ink);
       expect(out['font-variant-numeric']).toContain('tabular-nums');
       expect(
-        (await styles(panel(page).getByRole('button', { name: /^Receive token:/ }), ['color'])).color,
+        (await styles(panel(page).getByRole('button', { name: /^Receive token:/ }), ['color']))
+          .color,
       ).toBe(RGB.sub);
 
       // The USD value of the receive row: 15px sub, inside the panel's right padding.
       const usd = panel(page).getByText('$124.75');
-      expect(await styles(usd, ['font-size', 'color'])).toEqual({ 'font-size': '15px', color: RGB.sub });
+      expect(await styles(usd, ['font-size', 'color'])).toEqual({
+        'font-size': '15px',
+        color: RGB.sub,
+      });
       const u = await box(usd);
       expect(u.x + u.width).toBeCloseTo(p.x + p.width - 24, 0);
 
       // The route line: 13px sub with the 7px accent square; the rate pill: 36px, pill, 13px.
-      const line = main(page).getByText(/^Best of 3 routes/).locator('..');
+      const line = main(page)
+        .getByText(/^Best of 3 routes/)
+        .locator('..');
       expect(await styles(line, ['font-size', 'color', 'justify-content'])).toEqual({
         'font-size': '13px',
         color: RGB.sub,
@@ -920,7 +977,13 @@ test.describe('conformance to the canvas (Web Swap, connected): computed values'
       expect(db.width).toBe(320);
       expect(db.x + db.width / 2).toBeCloseTo(w / 2, 0);
       expect(
-        await styles(d, ['background-color', 'border-top-width', 'border-top-color', 'box-shadow', 'border-top-left-radius']),
+        await styles(d, [
+          'background-color',
+          'border-top-width',
+          'border-top-color',
+          'box-shadow',
+          'border-top-left-radius',
+        ]),
       ).toEqual({
         'background-color': RGB.surface,
         'border-top-width': '1px',
@@ -928,7 +991,9 @@ test.describe('conformance to the canvas (Web Swap, connected): computed values'
         'box-shadow': 'none',
         'border-top-left-radius': '0px',
       });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBeLessThanOrEqual(0);
     });
   }
 
@@ -946,14 +1011,18 @@ test.describe('conformance to the canvas (Web Swap, connected): computed values'
     else expect(usd.y).toBeGreaterThanOrEqual(token.y + token.height - 1);
     expect(right(a)).toBeLessThanOrEqual(token.x + 1);
     expect(right(usd)).toBeLessThanOrEqual(390 - 20 - 24 + 1);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(0);
   });
 
   test('a very long typed amount stays inside the panel', async ({ page }) => {
     await openConnected(page, 390, 844);
     await amount(page).fill('1'.repeat(70));
     await expect(cta(page)).toHaveText('Amount too large');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(0);
     const p = await box(panel(page));
     const a = await box(amount(page));
     expect(a.x + a.width).toBeLessThanOrEqual(p.x + p.width);
@@ -979,7 +1048,10 @@ test.describe('accessibility', () => {
       expect((await scan(page)).violations).toEqual([]);
     });
 
-    test(`axe: no violations while loading, on an error and when expired at ${w}`, async ({ page, api }) => {
+    test(`axe: no violations while loading, on an error and when expired at ${w}`, async ({
+      page,
+      api,
+    }) => {
       await openConnected(page, w, h);
       const gate = deferred();
       api.override((r) => (r.path === '/v1/quotes' ? { gate: gate.promise } : undefined));
@@ -1052,7 +1124,9 @@ test.describe('accessibility', () => {
     await expect(rateButton(page)).toHaveAttribute('aria-expanded', 'false');
   });
 
-  test('the token button opens the picker, a pick closes it, and focus comes back', async ({ page }) => {
+  test('the token button opens the picker, a pick closes it, and focus comes back', async ({
+    page,
+  }) => {
     await openConnected(page);
     const button = panel(page).getByRole('button', { name: 'Receive token: USDC, change' });
     await button.focus();
@@ -1067,7 +1141,9 @@ test.describe('accessibility', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
     await expect(pickerDialog(page)).toBeHidden();
-    await expect(panel(page).getByRole('button', { name: 'Receive token: DAI, change' })).toBeFocused();
+    await expect(
+      panel(page).getByRole('button', { name: 'Receive token: DAI, change' }),
+    ).toBeFocused();
   });
 
   test('reduced motion: nothing animates or transitions', async ({ page }) => {
@@ -1077,7 +1153,9 @@ test.describe('accessibility', () => {
     await rateButton(page).click();
     expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
     expect((await styles(cta(page), ['transition-duration']))['transition-duration']).toBe('0s');
-    expect((await styles(rateButton(page), ['transition-duration']))['transition-duration']).toBe('0s');
+    expect((await styles(rateButton(page), ['transition-duration']))['transition-duration']).toBe(
+      '0s',
+    );
   });
 
   test('every control is 44px tall or has a 44px hit area', async ({ page }) => {
@@ -1099,7 +1177,9 @@ test.describe('accessibility', () => {
     expect(small).toEqual([]);
   });
 
-  test('the visible focus ring is the canvas one on the token, flip and rate buttons', async ({ page }) => {
+  test('the visible focus ring is the canvas one on the token, flip and rate buttons', async ({
+    page,
+  }) => {
     await openConnected(page);
     await ready(page);
     for (const el of [
@@ -1113,17 +1193,18 @@ test.describe('accessibility', () => {
       await page.keyboard.press('Tab');
       await expect(el).toBeFocused();
       const s = await styles(el, ['outline-style', 'outline-width', 'outline-offset']);
-      expect(s).toEqual({ 'outline-style': 'solid', 'outline-width': '2px', 'outline-offset': '2px' });
+      expect(s).toEqual({
+        'outline-style': 'solid',
+        'outline-width': '2px',
+        'outline-offset': '2px',
+      });
     }
   });
 });
 
 /** Screenshots of the main states at the four widths (looked at by hand; no pixel baselines). */
 test.describe('screenshots', () => {
-  const states: [
-    string,
-    (page: Page, api: MockApi) => Promise<void>,
-  ][] = [
+  const states: [string, (page: Page, api: MockApi) => Promise<void>][] = [
     [
       'ready',
       async (page) => {
@@ -1145,7 +1226,10 @@ test.describe('screenshots', () => {
       async (page, api) => {
         api.override((r) =>
           r.path === '/v1/quotes'
-            ? { status: 502, json: { error: 'no_route', failures: [{ provider: '0x', error: 'no_liquidity' }] } }
+            ? {
+                status: 502,
+                json: { error: 'no_route', failures: [{ provider: '0x', error: 'no_liquidity' }] },
+              }
             : undefined,
         );
         await amount(page).fill('0.05');
@@ -1158,7 +1242,9 @@ test.describe('screenshots', () => {
         api.quoteSettings.ttlSec = 2;
         // Every replacement is stopped too, so the screen settles on "expired".
         await ready(page);
-        api.override((r) => (r.path === '/v1/quotes' ? { gate: new Promise(() => {}) } : undefined));
+        api.override((r) =>
+          r.path === '/v1/quotes' ? { gate: new Promise(() => {}) } : undefined,
+        );
         await expect(cta(page)).toHaveText('Quote expired');
       },
     ],

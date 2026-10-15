@@ -253,7 +253,11 @@ const ERROR_CODES: ReadonlySet<string> = new Set<QuoteErrorCode>([
   'signing_unavailable',
   'internal_error',
 ]);
-const SLOW_FAILURES: ReadonlySet<string> = new Set(['timeout', 'upstream_error', 'invalid_response']);
+const SLOW_FAILURES: ReadonlySet<string> = new Set([
+  'timeout',
+  'upstream_error',
+  'invalid_response',
+]);
 
 /**
  * The stable code of an error answer, or `undefined`. Only a closed set is accepted; any text the
