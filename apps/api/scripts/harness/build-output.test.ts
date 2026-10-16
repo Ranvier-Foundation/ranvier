@@ -5,7 +5,7 @@
  * `pnpm guard:local-chain` (build-output.ts).
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +74,18 @@ describe('the API production build (tsconfig.build.json, built now)', { timeout:
     const { files, hits } = scanOutput(out);
     expect(files).toBeGreaterThan(20);
     expect(hits).toEqual([]);
+  });
+
+  it('holds nothing of src/harness/ (tsconfig.build.json excludes it)', () => {
+    const build = JSON.parse(readFileSync(join(REPO, 'apps/api/tsconfig.build.json'), 'utf8')) as {
+      exclude: string[];
+    };
+    expect(build.exclude).toContain('src/harness/**');
+    const all = scanOutput(out, ['startHarnessApi', 'harnessCatalog', 'assertHarnessEnv']);
+    expect(all.hits).toEqual([]);
+    expect(existsSync(join(out, 'harness'))).toBe(false);
+    // The production modules the harness builds on are there (the scan is not blind).
+    expect(scanOutput(out, ['buildServerWithCatalog']).hits.length).toBeGreaterThan(0);
   });
 
   it('control: main.js was built', () => {

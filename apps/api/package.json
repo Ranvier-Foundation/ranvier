@@ -15,6 +15,8 @@
     "balances:smoke": "tsx scripts/balances-smoke.ts",
     "harness:smoke": "vitest run --config vitest.harness.config.ts",
     "harness:smoke:rpc": "tsx scripts/harness/smoke.ts",
+    "harness:api": "tsx src/harness/main.ts",
+    "harness:api:test": "vitest run --config vitest.harness.config.ts scripts/harness/harness-api.harness.test.ts",
     "guard:local-chain": "tsx scripts/harness/build-output.ts"
   },
   "dependencies": {

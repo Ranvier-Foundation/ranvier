@@ -16,6 +16,7 @@
     "guard:tokens": "pnpm --filter @ranvier/web guard:tokens",
     "e2e": "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3199} pnpm --filter @ranvier/web build && pnpm --filter @ranvier/web e2e",
     "harness:smoke": "pnpm --filter @ranvier/api harness:smoke",
+    "harness:api": "pnpm --filter @ranvier/api harness:api",
     "guard:local-chain": "pnpm --filter @ranvier/api guard:local-chain"
   },
   "devDependencies": {

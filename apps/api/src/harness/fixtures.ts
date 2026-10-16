@@ -1,5 +1,6 @@
 /**
- * LOCAL TEST HARNESS ONLY (ADR 0013, section 3). Never imported by `src/`.
+ * LOCAL TEST HARNESS ONLY (ADR 0013, section 3).
+ * Lives in `src/harness/`: excluded from the build (`dist/`), never imported by production code.
  *
  * Harness stand-ins for the two inputs the API takes from outside: a quote provider that answers
  * the way 0x does (AllowanceHolder `exec` wrapping a Settler `execute`, the shape `vetRoute` checks)
@@ -10,14 +11,10 @@
 import { NATIVE } from '@ranvier/chains';
 import type { ProviderQuote, QuoteRequest, TokenRef } from '@ranvier/types';
 import { encodeFunctionData, zeroAddress, type Hex } from 'viem';
-import {
-  ALLOWANCE_HOLDER_ABI,
-  SETTLER_ABI,
-  ZEROX_NATIVE_OUT,
-} from '../../src/domain/allowance-holder.js';
-import { slippageFloor } from '../../src/domain/route-safety.js';
-import type { PriceOracle, TokenPrice } from '../../src/ports/price-oracle.js';
-import type { QuoteProvider } from '../../src/ports/quote-provider.js';
+import { ALLOWANCE_HOLDER_ABI, SETTLER_ABI, ZEROX_NATIVE_OUT } from '../domain/allowance-holder.js';
+import { slippageFloor } from '../domain/route-safety.js';
+import type { PriceOracle, TokenPrice } from '../ports/price-oracle.js';
+import type { QuoteProvider } from '../ports/quote-provider.js';
 import { ETH_USD, HARNESS_CHAIN_KEY, HARNESS_NATIVE, PINNED, pinnedDecimals } from './pinned.js';
 
 const lower = (a: string): string => a.toLowerCase();

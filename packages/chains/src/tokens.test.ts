@@ -6,6 +6,8 @@ import {
   ARB_DAI_GATEWAY,
   ARB_WETH_GATEWAY,
   type CuratedToken,
+  displayOrder,
+  searchTokenList,
   OP_STANDARD_BRIDGE,
   listedDecimals,
   listTokens,
@@ -289,5 +291,36 @@ describe('searchTokens', () => {
 
   it('returns nothing for a chain without a list', () => {
     expect(symbols('solana:mainnet', '')).toEqual([]);
+  });
+});
+
+describe('displayOrder and searchTokenList (lists kept outside TOKEN_LIST)', () => {
+  it('displayOrder is the listTokens order, on a copy', () => {
+    for (const chain of ['evm:1', 'evm:8453', 'evm:42161'] as const) {
+      const list = TOKEN_LIST.filter((t) => t.chain === chain);
+      const shuffled = [...list].reverse();
+      expect(displayOrder(shuffled)).toEqual(listTokens(chain));
+      expect(shuffled).toEqual([...list].reverse());
+    }
+  });
+
+  it('searchTokenList over a chain list equals searchTokens', () => {
+    for (const chain of ['evm:1', 'evm:8453', 'evm:42161'] as const) {
+      for (const q of [
+        '',
+        'us',
+        'USDC',
+        'e',
+        'wrapped',
+        '0x12',
+        listTokens(chain)[1]?.address ?? '',
+      ]) {
+        for (const limit of [0, 1, 50]) {
+          expect(searchTokenList(listTokens(chain), q, limit)).toEqual(
+            searchTokens(chain, q, limit),
+          );
+        }
+      }
+    }
   });
 });

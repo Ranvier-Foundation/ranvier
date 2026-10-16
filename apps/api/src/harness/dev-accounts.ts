@@ -1,5 +1,6 @@
 /**
- * LOCAL TEST HARNESS ONLY (ADR 0013). Never imported by `src/`, never built into `dist/`.
+ * LOCAL TEST HARNESS ONLY (ADR 0013).
+ * Lives in `src/harness/`: excluded from the build (`dist/`), never imported by production code.
  *
  * PUBLIC anvil keys, chain 31337 only. They are derived in memory from the published anvil
  * mnemonic (the one every Foundry and Hardhat install prints) and are never written, logged or

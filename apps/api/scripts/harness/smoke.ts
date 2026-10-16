@@ -64,8 +64,12 @@ import {
 import { usdCents } from '../../src/domain/usd.js';
 import { buildServer } from '../../src/http/server.js';
 import { canSignChain } from '../../src/signing-policy.js';
-import { devAccounts, publicAnvilKey } from './dev-accounts.js';
-import { FixedPriceOracle, HarnessQuoteProvider, zeroXCalldata } from './fixtures.js';
+import { devAccounts, publicAnvilKey } from '../../src/harness/dev-accounts.js';
+import {
+  FixedPriceOracle,
+  HarnessQuoteProvider,
+  zeroXCalldata,
+} from '../../src/harness/fixtures.js';
 import {
   HARNESS_CHAIN_ID,
   HARNESS_CHAIN_KEY,
@@ -75,8 +79,12 @@ import {
   PINNED,
   WRAPPER_DOMAIN,
   type PinnedName,
-} from './pinned.js';
-import { assertLoopbackRpcUrl, RPC_URL_ENV, verifyLocalChain } from './rpc-guard.js';
+} from '../../src/harness/pinned.js';
+import {
+  assertLoopbackRpcUrl,
+  RPC_URL_ENV,
+  verifyLocalChain,
+} from '../../src/harness/rpc-guard.js';
 
 /** `NonceAlreadyUsed()` as the runbook and ADR 0013 record it. */
 export const NONCE_ALREADY_USED_SELECTOR = '0x1fb09b80';

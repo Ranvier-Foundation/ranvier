@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
-import { anvilAccount, devAccounts, publicAnvilKey } from './dev-accounts.js';
+import { anvilAccount, devAccounts, publicAnvilKey } from '../../src/harness/dev-accounts.js';
 import {
   ACCOUNT_INDEX,
   ETH_USD,
@@ -22,7 +22,7 @@ import {
   RUNBOOK_NAMES,
   SOLIDITY_NAMES,
   type PinnedName,
-} from './pinned.js';
+} from '../../src/harness/pinned.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const SOLIDITY = read('../../../../contracts/test/harness/HarnessConfig.sol');
@@ -104,7 +104,17 @@ describe('@ranvier/chains/local-dev is the table HarnessConfig.sol and the runbo
     }
     // No address literal in the harness sources: they import @ranvier/chains/local-dev.
     const literal = /0x[0-9a-fA-F]{40}\b/;
-    for (const file of ['pinned.ts', 'smoke.ts', 'fixtures.ts', 'anvil.ts', 'rpc-guard.ts']) {
+    for (const file of [
+      '../../src/harness/pinned.ts',
+      'smoke.ts',
+      '../../src/harness/fixtures.ts',
+      'anvil.ts',
+      '../../src/harness/rpc-guard.ts',
+      '../../src/harness/start.ts',
+      '../../src/harness/env-guard.ts',
+      '../../src/harness/catalog.ts',
+      '../../src/harness/main.ts',
+    ]) {
       expect(literal.test(read(file)), file).toBe(false);
     }
   });

@@ -6,7 +6,7 @@ import {
   HarnessRpcRefusedError,
   LOCAL_CHAIN_ID_HEX,
   verifyLocalChain,
-} from './rpc-guard.js';
+} from '../../src/harness/rpc-guard.js';
 import { runSmoke } from './smoke.js';
 
 afterEach(async () => {
@@ -148,7 +148,7 @@ describe('verifyLocalChain', () => {
 describe('the 31337 rail is a literal (PR 3 review, M1)', () => {
   it('LOCAL_CHAIN_ID_HEX is exactly 0x7a69, written as a literal in rpc-guard.ts', () => {
     expect(LOCAL_CHAIN_ID_HEX).toBe('0x7a69');
-    const src = readFileSync(new URL('./rpc-guard.ts', import.meta.url), 'utf8');
+    const src = readFileSync(new URL('../../src/harness/rpc-guard.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/export const LOCAL_CHAIN_ID_HEX = '0x7a69';/);
     expect(src).not.toMatch(/from '.\/pinned\.js'|local-dev/);
   });

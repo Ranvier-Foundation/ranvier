@@ -6,7 +6,7 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, 'scripts/harness/**/*.harness.test.ts'],
     coverage: {
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/testing/**', 'src/main.ts'],
+      exclude: ['src/**/*.test.ts', 'src/testing/**', 'src/main.ts', 'src/harness/main.ts'],
       thresholds: { lines: 90, branches: 85, functions: 90, statements: 90 },
     },
   },

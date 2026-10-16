@@ -1,12 +1,7 @@
-import {
-  chainFamily,
-  getChain,
-  isValidAddress,
-  isValidTokenAddress,
-  NATIVE,
-} from '@ranvier/chains';
+import { chainFamily, isValidAddress, isValidTokenAddress, NATIVE } from '@ranvier/chains';
 import type { ChainKey } from '@ranvier/types';
 import { z, type ZodError } from 'zod';
+import { REGISTRY_CATALOG, type ChainCatalog } from '../chain-catalog.js';
 import { HARD_MAX_SLIPPAGE_BPS } from '../config.js';
 
 const MAX_UINT256 = 2n ** 256n - 1n;
@@ -83,25 +78,30 @@ export const DEFAULT_TOKEN_LIMIT = 50;
 export const MAX_TOKEN_LIMIT = 100;
 
 /**
- * GET /v1/tokens query (ADR 0006). `chain` must be a registry chain. `q` is optional search text
- * of at most 64 characters: letters, digits, currency signs, spaces, `.`, `_` and `-` (enough for
- * symbols, names and addresses); anything else is malformed. `limit` is a plain decimal integer
- * from 1 to 100, default 50. Unknown parameters and repeated parameters are refused.
+ * GET /v1/tokens query (ADR 0006). `chain` must be a chain of the catalog (in production, the
+ * registry). `q` is optional search text of at most 64 characters: letters, digits, currency
+ * signs, spaces, `.`, `_` and `-` (enough for symbols, names and addresses); anything else is
+ * malformed. `limit` is a plain decimal integer from 1 to 100, default 50. Unknown parameters and
+ * repeated parameters are refused.
  */
-export const tokensQuerySchema = z.strictObject({
-  chain: chainKey.refine((k) => getChain(k) !== undefined, 'unknown chain'),
-  q: z
-    .string()
-    .max(MAX_TOKEN_QUERY_LENGTH)
-    .regex(/^[\p{L}\p{N}\p{Sc} ._-]*$/u, 'unsupported characters')
-    .optional(),
-  limit: z
-    .string()
-    .regex(/^[1-9]\d{0,2}$/, 'must be a positive integer')
-    .transform(Number)
-    .pipe(z.number().int().min(1).max(MAX_TOKEN_LIMIT))
-    .default(DEFAULT_TOKEN_LIMIT),
-});
+export const tokensQuerySchemaFor = (catalog: ChainCatalog) =>
+  z.strictObject({
+    chain: chainKey.refine((k) => catalog.getChain(k) !== undefined, 'unknown chain'),
+    q: z
+      .string()
+      .max(MAX_TOKEN_QUERY_LENGTH)
+      .regex(/^[\p{L}\p{N}\p{Sc} ._-]*$/u, 'unsupported characters')
+      .optional(),
+    limit: z
+      .string()
+      .regex(/^[1-9]\d{0,2}$/, 'must be a positive integer')
+      .transform(Number)
+      .pipe(z.number().int().min(1).max(MAX_TOKEN_LIMIT))
+      .default(DEFAULT_TOKEN_LIMIT),
+  });
+
+/** The production query schema: registry chains only. */
+export const tokensQuerySchema = tokensQuerySchemaFor(REGISTRY_CATALOG);
 
 /** Ethereum-style native placeholders: no wallet can hold their keys. */
 const NOT_A_WALLET: ReadonlySet<string> = new Set([

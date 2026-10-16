@@ -12,7 +12,7 @@ import { PUBLISHED_MNEMONIC_ACCOUNTS } from '../../src/published-addresses.js';
 import { setUpSigning } from '../../src/signer-setup.js';
 import { FAKE_KEY_ARN, FakeKms } from '../../src/testing/fake-kms.js';
 import { TRUSTED_ROUTERS } from '../../src/trusted-routers.js';
-import { anvilAccount, publicAnvilKey } from './dev-accounts.js';
+import { anvilAccount, publicAnvilKey } from '../../src/harness/dev-accounts.js';
 
 const WRAPPER = '0x000000000000000000000000000000000000fee1';
 

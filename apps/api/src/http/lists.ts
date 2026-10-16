@@ -1,7 +1,12 @@
-import { CHAINS, searchTokens } from '@ranvier/chains';
 import type { ChainFamily, ChainKey, TokenInfo, TokenTag } from '@ranvier/types';
 import type { FastifyInstance } from 'fastify';
-import { invalidRequest, tokensQuerySchema } from './schemas.js';
+import {
+  evmChainIdOf,
+  REGISTRY_CATALOG,
+  searchCatalog,
+  type ChainCatalog,
+} from '../chain-catalog.js';
+import { invalidRequest, tokensQuerySchemaFor } from './schemas.js';
 
 /**
  * Static data: the browser may keep list responses for five minutes. `private`, so no shared
@@ -43,16 +48,18 @@ export interface ListOptions {
   quoting: (chainId: number) => boolean;
   /** Whether balances can be read on a served chain right now (default: never). */
   balances?: (chainId: number) => boolean;
+  /** Chains and token lists (default: the registry; production never passes another). */
+  catalog?: ChainCatalog;
 }
 
 /**
- * The served chains, in registry order. Fields are copied one by one, so registry-only values
- * (oracle names, allowlists) never reach a client.
+ * The served chains, in catalog (registry) order. Fields are copied one by one, so registry-only
+ * values (oracle names, allowlists) never reach a client.
  */
 export function servedChains(opts: ListOptions): ChainView[] {
   const served = new Set(opts.servedChainIds);
-  return CHAINS.flatMap((c) => {
-    const id = c.family === 'evm' ? Number(c.key.slice('evm:'.length)) : undefined;
+  return (opts.catalog ?? REGISTRY_CATALOG).chains.flatMap((c) => {
+    const id = evmChainIdOf(c);
     if (id === undefined || !served.has(id)) return [];
     return [
       {
@@ -86,6 +93,8 @@ function tokenView(t: TokenInfo): TokenView {
  * provider, oracle or signer is called, and no request value is echoed back.
  */
 export function registerListRoutes(app: FastifyInstance, opts: ListOptions): void {
+  const catalog = opts.catalog ?? REGISTRY_CATALOG;
+  const tokensQuerySchema = tokensQuerySchemaFor(catalog);
   // Computed per request: `balances` follows RPC endpoint health.
   app.get('/v1/chains', async (_req, reply) => {
     return reply.header('cache-control', LIST_CACHE_CONTROL).send(servedChains(opts));
@@ -95,7 +104,7 @@ export function registerListRoutes(app: FastifyInstance, opts: ListOptions): voi
     const parsed = tokensQuerySchema.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send(invalidRequest(parsed.error));
     const { chain, q, limit } = parsed.data;
-    const tokens = searchTokens(chain, q ?? '', limit).map(tokenView);
+    const tokens = searchCatalog(catalog, chain, q ?? '', limit).map(tokenView);
     return reply.header('cache-control', LIST_CACHE_CONTROL).send(tokens);
   });
 }

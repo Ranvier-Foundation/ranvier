@@ -330,9 +330,17 @@ function compareTokens(a: TokenInfo, b: TokenInfo): number {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
+/**
+ * `tokens` in display order (native, then stablecoins, then the rest, by symbol), as a new array.
+ * The same order `listTokens` uses, for token lists kept outside `TOKEN_LIST`.
+ */
+export function displayOrder<T extends TokenInfo>(tokens: readonly T[]): T[] {
+  return [...tokens].sort(compareTokens);
+}
+
 /** The curated tokens of a chain in display order. Empty for a chain with no list. */
 export function listTokens(chain: ChainKey): readonly CuratedToken[] {
-  return TOKEN_LIST.filter((t) => t.chain === chain).sort(compareTokens);
+  return displayOrder(TOKEN_LIST.filter((t) => t.chain === chain));
 }
 
 /**
@@ -360,9 +368,17 @@ export const MIN_NAME_QUERY_LENGTH = 2;
  * Results keep display order.
  */
 export function searchTokens(chain: ChainKey, query: string, limit: number): CuratedToken[] {
-  const tokens = listTokens(chain);
+  return searchTokenList(listTokens(chain), query, limit);
+}
+
+/** `searchTokens` over a given list (in display order), for token lists outside `TOKEN_LIST`. */
+export function searchTokenList<T extends TokenInfo>(
+  tokens: readonly T[],
+  query: string,
+  limit: number,
+): T[] {
   const q = query.trim().toLowerCase();
-  let matches: readonly CuratedToken[];
+  let matches: readonly T[];
   if (q === '') {
     matches = tokens;
   } else if (FULL_EVM_ADDRESS.test(q)) {

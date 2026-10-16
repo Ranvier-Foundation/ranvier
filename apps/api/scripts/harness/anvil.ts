@@ -13,9 +13,9 @@ import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAddress } from 'viem';
-import { devAccounts } from './dev-accounts.js';
-import { FEE_WRAPPER_SALT } from './pinned.js';
-import { assertLoopbackRpcUrl, verifyLocalChain } from './rpc-guard.js';
+import { devAccounts } from '../../src/harness/dev-accounts.js';
+import { FEE_WRAPPER_SALT } from '../../src/harness/pinned.js';
+import { assertLoopbackRpcUrl, verifyLocalChain } from '../../src/harness/rpc-guard.js';
 
 export interface Foundry {
   anvil: string;

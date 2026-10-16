@@ -236,6 +236,23 @@ describe(
       expect(reached()).toEqual([]);
     });
 
+    it('production code importing apps/api/src/harness/ is caught by path alone (PR 4b)', () => {
+      // The harness file itself imports nothing from local-dev: only the forbidden path catches it.
+      write('apps/api/src/harness/plain.ts', 'export const S = 1;\n');
+      write(
+        'apps/api/src/uses-harness.ts',
+        "import { S } from './harness/plain.js';\nexport { S };\n",
+      );
+      try {
+        expect(reached()).toEqual([
+          'apps/api/src/uses-harness.ts -> apps/api/src/harness/plain.ts',
+        ]);
+      } finally {
+        rmSync(join(root, 'apps/api/src/uses-harness.ts'));
+        rmSync(join(root, 'apps/api/src/harness/plain.ts'));
+      }
+    });
+
     it.each([
       ['P4 workers', 'apps/workers/src/health.ts'],
       ['P5 an API entry other than main.ts (kms-smoke.ts)', 'apps/api/src/kms-smoke.ts'],
@@ -308,6 +325,26 @@ describe('production code reaches no harness code (the real repo)', { timeout: 1
     expect(graph.problems).toEqual([]);
     expect(harnessReached(REPO, graph)).toEqual([]);
     expect(rel(graph.files)).toContain('packages/chains/src/tokens.ts');
+  });
+
+  it('control: the harness API entry reaches local-dev and src/harness (the guard would see it)', () => {
+    const graph = importGraph(REPO, [at('apps/api/src/harness/main.ts')]);
+    expect(graph.problems).toEqual([]);
+    expect(rel(graph.files)).toEqual(
+      expect.arrayContaining([
+        'packages/chains/src/local-dev.ts',
+        'apps/api/src/harness/start.ts',
+        'apps/api/src/http/server.ts',
+      ]),
+    );
+    expect(harnessReached(REPO, graph).length).toBeGreaterThan(0);
+  });
+
+  it('no production root is under apps/api/src/harness/, and none reaches it', () => {
+    const roots = rel(productionRoots(REPO));
+    expect(roots.filter((f) => f.startsWith('apps/api/src/harness/'))).toEqual([]);
+    const graph = importGraph(REPO, productionRoots(REPO));
+    expect(rel(graph.files).filter((f) => f.startsWith('apps/api/src/harness/'))).toEqual([]);
   });
 
   it('control: the harness smoke does reach local-dev (the analysis is not blind)', () => {
