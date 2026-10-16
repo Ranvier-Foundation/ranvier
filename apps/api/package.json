@@ -12,7 +12,9 @@
     "test": "vitest run --coverage",
     "kms:smoke": "tsx scripts/kms-smoke.ts",
     "check:aws-overrides": "tsx scripts/check-aws-overrides.ts",
-    "balances:smoke": "tsx scripts/balances-smoke.ts"
+    "balances:smoke": "tsx scripts/balances-smoke.ts",
+    "harness:smoke": "vitest run --config vitest.harness.config.ts",
+    "harness:smoke:rpc": "tsx scripts/harness/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "3.1141.0",

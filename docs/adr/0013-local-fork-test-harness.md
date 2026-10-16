@@ -251,6 +251,8 @@ CI runs the harness in its own job with no secrets, using `foundry-rs/foundry-to
 
 PR 1 status (2026-10-15): built on `feat/harness-mock-contracts`. The mocks live in `contracts/test/harness/` rather than `contracts/harness/`, so Slither and coverage skip them. A local `forge build` still compiles them into `out/`; that is harmless, because `Deploy.s.sol`'s metadata imports only `FeeWrapper` and nothing publishes `out/`; addresses are in the [runbook](../runbooks/local-harness.md).
 
+PR 2 status (2026-10-16): built on `feat/harness-ts-smoke`. The smoke lives in `apps/api/scripts/harness/` (not a root `scripts/` folder) so it imports the API's modules directly and reuses the API's `tsx`, `tsconfig.scripts.json` and lint; the API build compiles `src/` only. `pnpm harness:smoke` starts and stops its own anvil; commands are in the [runbook](../runbooks/local-harness.md).
+
 | #   | PR                                                                                                                                                                           | Owner                         | Size | SR  |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---- | --- |
 | 1   | Harness mocks (section 3) with forge tests; `DeployHarness.s.sol`; forge `HarnessSmoke.s.sol` (approve and swap on plain anvil); the `Deploy.s.sol` role guard and its tests | contract-engineer             | M    | yes |
