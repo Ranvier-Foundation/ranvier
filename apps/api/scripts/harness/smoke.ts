@@ -69,6 +69,9 @@ import { FixedPriceOracle, HarnessQuoteProvider, zeroXCalldata } from './fixture
 import {
   HARNESS_CHAIN_ID,
   HARNESS_CHAIN_KEY,
+  HARNESS_CHAIN_NAME,
+  HARNESS_NATIVE,
+  LISTED_TOKENS,
   PINNED,
   WRAPPER_DOMAIN,
   type PinnedName,
@@ -104,6 +107,9 @@ const TOKEN_ABI = parseAbi([
   'function allowance(address owner, address spender) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
   'function mint(address to, uint256 amount)',
+  'function symbol() view returns (string)',
+  'function name() view returns (string)',
+  'function decimals() view returns (uint8)',
 ]);
 
 /** FeeWrapper errors the scenarios expect, by name (selector = keccak256("Name()")[0..4]). */
@@ -150,8 +156,12 @@ const SETTLER = getAddress(PINNED.settler);
 async function connect(url: string) {
   const chain = defineChain({
     id: HARNESS_CHAIN_ID,
-    name: 'Local test chain (not a real network)',
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    name: HARNESS_CHAIN_NAME,
+    nativeCurrency: {
+      name: HARNESS_NATIVE.name,
+      symbol: HARNESS_NATIVE.symbol,
+      decimals: HARNESS_NATIVE.decimals,
+    },
     rpcUrls: { default: { http: [url] } },
   });
   // Redirects refused, no retries: a loopback endpoint cannot hand a request on.
@@ -455,6 +465,22 @@ async function preflight(env: Env): Promise<string> {
   for (const name of Object.keys(PINNED) as PinnedName[]) {
     const code = await env.pub.getCode({ address: PINNED[name] });
     check(code !== undefined && code !== '0x', `no code at the pinned ${name} address`);
+  }
+  // The tokens @ranvier/chains/local-dev lists are the deployed ones (symbol, name, decimals).
+  for (const token of LISTED_TOKENS) {
+    const address = getAddress(token.address);
+    const read = <F extends 'symbol' | 'name' | 'decimals'>(functionName: F) =>
+      env.pub.readContract({ address, abi: TOKEN_ABI, functionName });
+    const [symbol, tokenName, decimals] = await Promise.all([
+      read('symbol'),
+      read('name'),
+      read('decimals'),
+    ]);
+    check(
+      symbol === token.symbol && tokenName === token.name && decimals === token.decimals,
+      `local-dev lists ${token.symbol} as ${token.name} (${token.decimals}); chain says ` +
+        `${symbol} ${tokenName} (${decimals})`,
+    );
   }
   const [, name, version, domainChainId, verifyingContract] = await env.pub.readContract({
     address: WRAPPER,

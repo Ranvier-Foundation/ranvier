@@ -14,7 +14,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAddress } from 'viem';
 import { devAccounts } from './dev-accounts.js';
-import { FEE_WRAPPER_SALT } from './pinned.js';
+import { FEE_WRAPPER_SALT, HARNESS_CHAIN_ID } from './pinned.js';
 import { assertLoopbackRpcUrl, verifyLocalChain } from './rpc-guard.js';
 
 export interface Foundry {
@@ -92,7 +92,15 @@ export async function startAnvil(foundry: Foundry, port: number): Promise<AnvilH
   const url = assertLoopbackRpcUrl(`http://127.0.0.1:${port}`);
   const child = spawn(
     foundry.anvil,
-    ['--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent'],
+    [
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--chain-id',
+      String(HARNESS_CHAIN_ID),
+      '--silent',
+    ],
     { env: foundryEnv(foundry), stdio: 'ignore' },
   );
   const pid = child.pid;

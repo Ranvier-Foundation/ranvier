@@ -2,31 +2,51 @@
  * LOCAL TEST HARNESS ONLY (ADR 0013). Never imported by `src/`, never built into `dist/`.
  *
  * The pinned table of the harness contracts on a fresh anvil (chain 31337): the CREATE2 results
- * from `contracts/test/harness/HarnessConfig.sol`, also listed in docs/runbooks/local-harness.md.
- * `pinned.test.ts` checks that this table equals both, so a moved mock fails here first. The smoke
+ * from `contracts/test/harness/HarnessConfig.sol`, also listed in docs/runbooks/local-harness.md,
+ * taken from `@ranvier/chains/local-dev` (ADR 0013, section 2). `pinned.test.ts` checks that this
+ * table and that module equal both, so a moved mock fails here first. The smoke
  * takes addresses from this table only, never from a deploy log or the environment, and checks the
  * chain against it (code present, EIP-712 domain, roles, router allowlist) before it trusts it.
  *
  * Addresses only: the dev accounts are derived from the published mnemonic in `dev-accounts.ts`.
  */
-import type { Hex } from 'viem';
+import {
+  LOCAL_DEV_CHAIN,
+  LOCAL_DEV_CHAIN_ID,
+  LOCAL_DEV_CHAIN_KEY,
+  LOCAL_DEV_CONTRACTS,
+  localDevToken,
+} from '@ranvier/chains/local-dev';
+import { getAddress, type Hex } from 'viem';
 
 /** The only chain the harness talks to. 31337 is not reserved: loopback is checked as well. */
-export const HARNESS_CHAIN_ID = 31337;
-export const HARNESS_CHAIN_KEY = 'evm:31337' as const;
+export const HARNESS_CHAIN_ID = LOCAL_DEV_CHAIN_ID;
+export const HARNESS_CHAIN_KEY = LOCAL_DEV_CHAIN_KEY;
+/** viem chain fields, from the same module. */
+export const HARNESS_CHAIN_NAME = LOCAL_DEV_CHAIN.name;
+export const HARNESS_NATIVE = localDevToken('ETH');
 
-/** Contract addresses, checksummed, exactly as in HarnessConfig.sol. */
-export const PINNED = {
-  allowanceHolder: '0xC0b06d1E9E0bb6e4b5d903A2b5afc57e1bF41Ce2',
-  settler: '0x2c7959766740C57e7615b9452FDe5E7273Bb6E3c',
-  hUSDC: '0x5784F90419222088aC18AE5B62ef381f4Cb2deB1',
-  hWETH: '0x47FA559bE608137ea4D28588b6c57D0D1aC6552D',
-  hUNDER: '0x3d186379d8AfB89332aA0b11CFD399d4966Eb917',
-  hORACLE: '0xa03B74d8a5289B2A6278554183cE5d51dEb12c09',
-  feeWrapper: '0x60A10abb52c31ec38f1f93c70B64D2Fb00913859',
-} as const satisfies Record<string, Hex>;
+/**
+ * Contract addresses, checksummed. One source: `@ranvier/chains/local-dev` (no literal here);
+ * `pinned.test.ts` checks the checksummed form equals HarnessConfig.sol and the runbook exactly.
+ */
+export const PINNED = Object.freeze({
+  allowanceHolder: getAddress(LOCAL_DEV_CONTRACTS.allowanceHolder),
+  settler: getAddress(LOCAL_DEV_CONTRACTS.settler),
+  hUSDC: getAddress(localDevToken('hUSDC').address),
+  hWETH: getAddress(localDevToken('hWETH').address),
+  hUNDER: getAddress(LOCAL_DEV_CONTRACTS.scenarioTokens.hUNDER),
+  hORACLE: getAddress(LOCAL_DEV_CONTRACTS.scenarioTokens.hORACLE),
+  feeWrapper: getAddress(LOCAL_DEV_CONTRACTS.feeWrapper),
+} satisfies Record<string, Hex>);
 
 export type PinnedName = keyof typeof PINNED;
+
+/** The tokens `LOCAL_DEV_CHAIN` lists (not the native coin): the smoke checks each on chain. */
+export const LISTED_TOKENS = LOCAL_DEV_CHAIN.tokens.filter((t) => t.address !== 'native');
+
+/** Decimals of the two listed harness tokens, from `LOCAL_DEV_CHAIN.tokens`. */
+export const pinnedDecimals = (symbol: 'hUSDC' | 'hWETH'): number => localDevToken(symbol).decimals;
 
 /** The names these addresses have in HarnessConfig.sol (`address internal constant <NAME>`). */
 export const SOLIDITY_NAMES: Readonly<Record<PinnedName, string>> = {
