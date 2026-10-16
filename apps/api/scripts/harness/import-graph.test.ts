@@ -310,6 +310,26 @@ describe('production code reaches no harness code (the real repo)', { timeout: 1
     expect(rel(graph.files)).toContain('packages/chains/src/tokens.ts');
   });
 
+  it('control: the harness API entry reaches local-dev and src/harness (the guard would see it)', () => {
+    const graph = importGraph(REPO, [at('apps/api/src/harness/main.ts')]);
+    expect(graph.problems).toEqual([]);
+    expect(rel(graph.files)).toEqual(
+      expect.arrayContaining([
+        'packages/chains/src/local-dev.ts',
+        'apps/api/src/harness/start.ts',
+        'apps/api/src/http/server.ts',
+      ]),
+    );
+    expect(harnessReached(REPO, graph).length).toBeGreaterThan(0);
+  });
+
+  it('no production root is under apps/api/src/harness/, and none reaches it', () => {
+    const roots = rel(productionRoots(REPO));
+    expect(roots.filter((f) => f.startsWith('apps/api/src/harness/'))).toEqual([]);
+    const graph = importGraph(REPO, productionRoots(REPO));
+    expect(rel(graph.files).filter((f) => f.startsWith('apps/api/src/harness/'))).toEqual([]);
+  });
+
   it('control: the harness smoke does reach local-dev (the analysis is not blind)', () => {
     const graph = importGraph(REPO, [at('apps/api/scripts/harness/smoke.ts')]);
     expect(graph.problems).toEqual([]);

@@ -1,7 +1,8 @@
-import { getChain, NATIVE } from '@ranvier/chains';
+import { NATIVE } from '@ranvier/chains';
 import { isWrapOrUnwrap } from '@ranvier/fees';
 import type { QuoteRequest } from '@ranvier/types';
 import { encodeFunctionData, maxUint256, type Hex } from 'viem';
+import { REGISTRY_CATALOG, type ChainCatalog } from '../chain-catalog.js';
 import { evmChainId, toAddress } from './swap-quote.js';
 
 /** The two WETH9 functions a native wrap/unwrap needs. */
@@ -32,14 +33,18 @@ export interface DirectWrap {
  * Returns the direct wrap/unwrap transaction when the request is native <-> the same EVM
  * chain's wrapped native token (per the fee schedule's own detection), otherwise undefined.
  * Solana wSOL is out of scope and returns undefined.
+ *
+ * The fee schedule decides first, from the registry: a chain outside the registry (a catalog's
+ * extra chain) is never a wrap, whatever the catalog says.
  */
 export function buildDirectWrap(
   request: Pick<QuoteRequest, 'sellToken' | 'buyToken' | 'sellAmount'>,
+  catalog: ChainCatalog = REGISTRY_CATALOG,
 ): DirectWrap | undefined {
   const { sellToken, buyToken, sellAmount } = request;
   if (evmChainId(sellToken) === undefined) return undefined;
   if (!isWrapOrUnwrap(sellToken, buyToken)) return undefined;
-  const chain = getChain(sellToken.chain);
+  const chain = catalog.getChain(sellToken.chain);
   if (!chain) return undefined;
   if (sellAmount <= 0n || sellAmount > maxUint256) {
     throw new RangeError('sellAmount must be between 1 and 2^256 - 1');

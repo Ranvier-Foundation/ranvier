@@ -2,6 +2,12 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { quoteFee } from '@ranvier/fees';
 import type { Hex } from 'viem';
 import { randomBytes } from 'node:crypto';
+import {
+  assertCatalogExtendsRegistry,
+  ChainCatalogError,
+  REGISTRY_CATALOG,
+  type ChainCatalog,
+} from '../chain-catalog.js';
 import type { BalanceService } from '../domain/balances.js';
 import { compareProviderQuotes } from '../domain/orchestrator.js';
 import type { RoutePolicy } from '../domain/route-policy.js';
@@ -93,7 +99,30 @@ function loggerOptions(logger: ServerDeps['logger']) {
   };
 }
 
+/**
+ * The production server: chains, token lists, balances and direct wraps come from the registry
+ * (`REGISTRY_CATALOG`), always. It takes no catalog: a `catalog` field (only possible through a
+ * cast) is refused, and so is a balance service built on another catalog. No configuration can add
+ * a chain to what it serves (ADR 0013, section 2).
+ */
 export function buildServer(deps: ServerDeps): FastifyInstance {
+  if ('catalog' in deps) {
+    throw new ChainCatalogError('buildServer serves the registry only and takes no chain catalog');
+  }
+  return buildServerWithCatalog(deps, REGISTRY_CATALOG);
+}
+
+/**
+ * `buildServer` over `catalog`, which must be the registry plus only local or test chains
+ * (`assertCatalogExtendsRegistry`). Production calls `buildServer`; only the local test harness
+ * (`src/harness/`, never built) calls this with a wider catalog. The fee schedule, the price
+ * oracle, the route policy and every signing gate are unaffected by the catalog.
+ */
+export function buildServerWithCatalog(deps: ServerDeps, catalog: ChainCatalog): FastifyInstance {
+  assertCatalogExtendsRegistry(catalog);
+  if (deps.balances && deps.balances.service.catalog !== catalog) {
+    throw new ChainCatalogError('the balance service was built on another chain catalog');
+  }
   const app = Fastify({
     logger: loggerOptions(deps.logger),
     bodyLimit: 16 * 1024,
@@ -143,6 +172,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     servedChainIds: deps.servedChainIds ?? [],
     quoting: (chainId) => routingConfigured && (deps.routePolicy?.has(chainId) ?? false),
     balances: (chainId) => deps.balances?.service.available(chainId) ?? false,
+    catalog,
   });
   const balanceService = deps.balances?.service;
   if (balanceService) app.addHook('onClose', async () => balanceService.close());
@@ -165,7 +195,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
     // Native wrap/unwrap is free by the fee schedule and 1:1 on the wrapped native contract,
     // so it bypasses providers, the price oracle, the fee wrapper and signing (ADR 0003).
-    const wrap = buildDirectWrap(request);
+    const wrap = buildDirectWrap(request, catalog);
     if (wrap) {
       // USD value and first-swap status cannot change a 0 bps fee, so neither is fetched.
       const fee = quoteFee({ ...request, usdValue: 0n, isFirstSwap: false });

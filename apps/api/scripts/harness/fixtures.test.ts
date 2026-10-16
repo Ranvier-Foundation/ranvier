@@ -3,9 +3,9 @@ import type { QuoteRequest } from '@ranvier/types';
 import { describe, expect, it } from 'vitest';
 import { buildRoutePolicy } from '../../src/domain/route-policy.js';
 import { UnsafeRouteError, vetRoute } from '../../src/domain/route-safety.js';
-import { FixedPriceOracle, HarnessQuoteProvider } from './fixtures.js';
-import { devAccounts } from './dev-accounts.js';
-import { HARNESS_CHAIN_ID, HARNESS_CHAIN_KEY, PINNED } from './pinned.js';
+import { FixedPriceOracle, HarnessQuoteProvider } from '../../src/harness/fixtures.js';
+import { devAccounts } from '../../src/harness/dev-accounts.js';
+import { HARNESS_CHAIN_ID, HARNESS_CHAIN_KEY, PINNED } from '../../src/harness/pinned.js';
 
 const TAKER = devAccounts().user.address.toLowerCase();
 const policy = buildRoutePolicy({

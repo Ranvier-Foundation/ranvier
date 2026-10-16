@@ -5,7 +5,11 @@
  */
 import type * as LocalDev from '@ranvier/chains/local-dev';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertLocalDevChain, HARNESS_CHAIN_ID, HARNESS_CHAIN_KEY } from './pinned.js';
+import {
+  assertLocalDevChain,
+  HARNESS_CHAIN_ID,
+  HARNESS_CHAIN_KEY,
+} from '../../src/harness/pinned.js';
 
 describe('the harness runs on 31337 only, whatever local-dev says', () => {
   afterEach(() => {
@@ -36,7 +40,7 @@ describe('the harness runs on 31337 only, whatever local-dev says', () => {
       ...(await importOriginal<Record<string, unknown>>()),
       ...patch,
     }));
-    await expect(import('./pinned.js')).rejects.toThrow('refuses to load');
+    await expect(import('../../src/harness/pinned.js')).rejects.toThrow('refuses to load');
     await expect(import('./smoke.js')).rejects.toThrow('refuses to load');
   });
 
@@ -46,6 +50,6 @@ describe('the harness runs on 31337 only, whatever local-dev says', () => {
       const orig = await importOriginal<typeof LocalDev>();
       return { ...orig, LOCAL_DEV_CHAIN: { ...orig.LOCAL_DEV_CHAIN, chainId: 84532 } };
     });
-    await expect(import('./pinned.js')).rejects.toThrow('refuses to load');
+    await expect(import('../../src/harness/pinned.js')).rejects.toThrow('refuses to load');
   });
 });

@@ -1,6 +1,13 @@
 # Runbook: local chain test harness
 
-Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(planned)** describe commands that do not exist yet. The mock contracts, `DeployHarness.s.sol`, the forge smoke script and the `Deploy.s.sol` role guard are built (PR 1), the TypeScript smoke (PR 2), and `@ranvier/chains/local-dev` with its guard tests (PR 3). Nothing here uses real funds, a live network or a secret.
+Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(planned)** describe commands that do not exist yet. Built so far:
+
+- the mock contracts, `DeployHarness.s.sol`, the forge smoke script and the `Deploy.s.sol` role guard (PR 1);
+- the TypeScript smoke (PR 2);
+- `@ranvier/chains/local-dev` with its guard tests (PR 3);
+- the production signer guards (PR 4a) and the harness API, `pnpm harness:api` (PR 4b).
+
+Nothing here uses real funds, a live network or a secret.
 
 ## Rules
 
@@ -38,7 +45,7 @@ pnpm harness:down     # stops exactly the PIDs in .harness/pids.json
 2. runs `DeployHarness.s.sol`: the mocks, then the wrapper through `Deploy.s.sol`'s own code path with the mock AllowanceHolder as its only router;
 3. checks the deployed addresses against `@ranvier/chains/local-dev`, and stops with "mocks changed: update local-dev addresses" if they differ;
 4. funds account 2 with `anvil_setBalance` and the harness tokens' `mint`;
-5. starts the harness API (`RANVIER_ENV=harness`, `ZEROX_CHAIN_IDS=31337`, the local key allowed for `[31337]` only). The API checks `feeSigner()` on chain before it listens;
+5. starts the harness API (`pnpm harness:api`, built: see "Harness API" below). The API checks `feeSigner()` on chain before it listens;
 6. builds the web with `RANVIER_BUILD_PROFILE=harness` into `.next-harness` and serves it on 3310.
 
 ## Mock contracts (built)
@@ -157,7 +164,57 @@ pnpm harness:smoke    # its own anvil on a free 127.0.0.1 port, DeployHarness, t
 RANVIER_HARNESS_RPC_URL=http://127.0.0.1:8645 pnpm --filter @ranvier/api harness:smoke:rpc
 ```
 
-Before it builds any client, the smoke refuses an RPC URL that is not exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` (no request is sent), then one that does not answer `eth_chainId` 31337 (nothing else is sent). It then checks the pinned table on chain (code at every address, `eip712Domain()` name, version and chain ID, `feeSigner()`, `feeCollector()`, and a router allowlist rebuilt from `RouterSet` events that must be exactly the mock holder) before it sends a transaction. It takes addresses only from `apps/api/scripts/harness/pinned.ts`, which holds no address literal: it imports them from `@ranvier/chains/local-dev` (below). A unit test (`pinned.test.ts`) compares that module, row by row and in checksummed form, with `HarnessConfig.sol` and the table above, and the smoke's preflight also checks hUSDC's and hWETH's symbol, name and decimals on chain. The smoke code lives under `apps/api/scripts/`, which the API build (`tsconfig.build.json`, `rootDir: src`) never compiles.
+Before it builds any client, the smoke refuses an RPC URL that is not exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` (no request is sent), then one that does not answer `eth_chainId` 31337 (nothing else is sent). It then checks the pinned table on chain (code at every address, `eip712Domain()` name, version and chain ID, `feeSigner()`, `feeCollector()`, and a router allowlist rebuilt from `RouterSet` events that must be exactly the mock holder) before it sends a transaction. It takes addresses only from `apps/api/src/harness/pinned.ts`, which holds no address literal: it imports them from `@ranvier/chains/local-dev` (below). A unit test (`pinned.test.ts`) compares that module, row by row and in checksummed form, with `HarnessConfig.sol` and the table above, and the smoke's preflight also checks hUSDC's and hWETH's symbol, name and decimals on chain. The smoke code lives under `apps/api/scripts/`, which the API build (`tsconfig.build.json`, `rootDir: src`) never compiles.
+
+## Harness API (built)
+
+The real API server on the local chain. Start anvil and deploy with the manual steps above, then:
+
+```sh
+RANVIER_ENV=harness ZEROX_CHAIN_IDS=31337 RPC_URLS_EVM_31337=http://127.0.0.1:8645 pnpm harness:api
+# prints: harness API (chain 31337 only, PUBLIC anvil keys, not real funds): http://127.0.0.1:4310
+# optional: PORT (default 4310, never 3000), HOST (127.0.0.1 or ::1), WEB_ORIGINS (loopback only)
+```
+
+It is `apps/api/src/harness/main.ts`, run with `tsx`. `tsconfig.build.json` leaves `src/harness/` out of `dist/`. Tests check that `dist/` holds none of it and that no production module reaches it. The server is the production `buildServer` code, with these differences:
+
+- the chain catalog: the registry plus `LOCAL_DEV_CHAIN`, through `buildServerWithCatalog`. Production `buildServer` refuses any catalog;
+- the 0x-shaped `HarnessQuoteProvider` and the `FixedPriceOracle`;
+- the route policy `{31337: mock AllowanceHolder -> MockSettler}`;
+- `LocalKeySigner` with anvil account 1 (a PUBLIC anvil key, chain 31337 only, derived in memory), allowed for `[31337]` written as a literal.
+
+It refuses to start, naming the reason, unless all of these hold. Every check before the chain ID check runs before any request is sent, and none of them opens a port:
+
+1. `RANVIER_ENV` is exactly `harness`, and `NODE_ENV` is not `production`.
+2. `ZEROX_CHAIN_IDS` is exactly `31337`.
+3. None of `KMS_KEY_ID`, `KMS_EXPECTED_SIGNER_ADDRESS`, `ZEROX_API_KEY`, `QUOTE_SIGNER_PRIVATE_KEY` or `LOCAL_SIGNER_CHAIN_IDS` is present, not even empty.
+4. RPC variables:
+   - no `RPC_URLS_EVM_<id>` is set for another chain;
+   - `RPC_URLS_EVM_31337` is exactly one `http://127.0.0.1:<port>` or `http://[::1]:<port>` (not port 3000);
+   - `RANVIER_HARNESS_RPC_URL`, if set, is the same URL.
+5. `HOST` and `WEB_ORIGINS` are loopback, and `PORT` is not 3000.
+6. `FEE_WRAPPER_ADDRESS`, if set, is the pinned wrapper.
+7. The endpoint answers `eth_chainId` 31337. This sends one request.
+8. The production on-chain signer check passes. It reads the code, `feeSigner()` and `eip712Domain()` of the pinned wrapper.
+
+At runtime it re-checks `feeSigner()` every 10 minutes, like production. If `feeSigner` has been rotated, signing stops (`503 signing_unavailable`).
+
+Balances: plain anvil has no Multicall3 (nothing at `0xcA11…CA11`; checked with anvil 1.8.3). 31337 is not one of the reader's Multicall3 chains, so `POST /v1/balances` uses the reader's existing individual-call fallback (ADR 0009), with every call pinned to one block. Nothing is deployed for it, and production is unchanged. Anvil mines only on demand, so the harness allows blocks up to a day old (or a day ahead, after `evm_increaseTime`).
+
+What it does not do:
+
+- **No direct wraps.** ETH to hWETH is not a direct wrap: the fee schedule reads the registry, and the registry does not know chain 31337.
+- **Mock pairs only.** It quotes only the MockSettler pairs.
+
+Tests:
+
+- `apps/api/src/harness/start.test.ts`: every refusal above against a fake node. Each test proves that nothing was sent (for the environment checks) and that the port stayed closed.
+- `apps/api/scripts/harness/harness-api.harness.test.ts`: the real entry against its own anvil and `DeployHarness`, all over HTTP. It covers:
+  - `/v1/chains`, `/v1/tokens`, and `/v1/balances` for the funded user;
+  - `/v1/quotes`, then the approval and swap sent as the user, with the smoke's scenario 1 checks;
+  - a rotated `feeSigner`: a new start is refused, and the running API answers 503 until the chain is reverted.
+
+  It runs with `pnpm harness:smoke`, or alone with `pnpm --filter @ranvier/api harness:api:test`, and is skipped without Foundry.
 
 ## Local chain config (built)
 
@@ -191,6 +248,8 @@ The owner decided against fork mode for now. It needs an archive RPC (public end
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Harness API refuses: chain ID is not 31337, or the RPC is not loopback | anvil was started without `--chain-id 31337`, or a non-loopback URL is set. Restart anvil and fix the URL.                |
 | Harness API refuses: `RPC_URLS_EVM_<id>` for another chain             | A variable was inherited from your shell. Unset it.                                                                       |
+| Harness API refuses: `KMS_KEY_ID` (or another key variable) is set     | The harness uses only its own PUBLIC anvil key. Unset the variable, even if it is empty.                                  |
+| `/v1/balances` answers 503 on the harness                              | anvil's newest block is over a day old, or a day ahead. Mine a block (`cast rpc anvil_mine`) or restart anvil.            |
 | Harness API refuses: `feeSigner()` differs from the signer             | The wrapper was deployed with another `FEE_SIGNER`. Redeploy on a fresh anvil.                                            |
 | Swap reverts `0x1fb09b80` (`NonceAlreadyUsed`)                         | The same signed quote was sent twice. Ask for a new quote.                                                                |
 | Swap reverts `QuoteExpired`                                            | Chain time is past the deadline (for example after `evm_increaseTime`). Ask for a new quote.                              |

@@ -1,5 +1,6 @@
-import { listTokens, NATIVE } from '@ranvier/chains';
+import { NATIVE } from '@ranvier/chains';
 import type { ChainKey } from '@ranvier/types';
+import { REGISTRY_CATALOG, type ChainCatalog } from '../chain-catalog.js';
 import { ConcurrencyLimit, ConcurrencyLimitError } from '../lib/concurrency-limit.js';
 import { ChainReadError, type ChainReader, type EvmAddress } from '../ports/chain-reader.js';
 
@@ -39,6 +40,8 @@ export interface BalanceServiceOptions {
   reader: ChainReader;
   /** EVM chain IDs the API serves (ZEROX_CHAIN_IDS). */
   servedChainIds: readonly number[];
+  /** Where the token lists come from (default: the registry; production never passes another). */
+  catalog?: ChainCatalog;
   /** Reuse a successful read for this long (default 3000 ms). */
   cacheTtlMs?: number;
   /** Remember a failed read for this long (default 1000 ms). */
@@ -74,12 +77,15 @@ interface Work {
 }
 
 /** The served chain IDs that have a curated token list: the chains balances are offered for. */
-export function balanceChainIds(servedChainIds: readonly number[]): number[] {
-  return [...new Set(servedChainIds)].filter((id) => listTokens(`evm:${id}`).length > 0);
+export function balanceChainIds(
+  servedChainIds: readonly number[],
+  catalog: ChainCatalog = REGISTRY_CATALOG,
+): number[] {
+  return [...new Set(servedChainIds)].filter((id) => catalog.listTokens(`evm:${id}`).length > 0);
 }
 
-function plan(chainId: number): ChainPlan {
-  const list = listTokens(`evm:${chainId}`);
+function plan(chainId: number, catalog: ChainCatalog): ChainPlan {
+  const list = catalog.listTokens(`evm:${chainId}`);
   const order = list.map((t) => (t.address === NATIVE ? NATIVE : (t.address as EvmAddress)));
   return {
     chainId,
@@ -89,6 +95,8 @@ function plan(chainId: number): ChainPlan {
 }
 
 export class BalanceService {
+  /** The catalog the plans were built from; `buildServer` requires it to be its own. */
+  readonly catalog: ChainCatalog;
   private readonly plans = new Map<ChainKey, ChainPlan>();
   private readonly limits = new Map<number, ConcurrencyLimit>();
   private readonly cache = new Map<string, CacheEntry>();
@@ -103,6 +111,7 @@ export class BalanceService {
 
   constructor(opts: BalanceServiceOptions) {
     this.reader = opts.reader;
+    this.catalog = opts.catalog ?? REGISTRY_CATALOG;
     this.cacheTtlMs = opts.cacheTtlMs ?? 3_000;
     this.failureTtlMs = opts.failureTtlMs ?? 1_000;
     this.maxCacheEntries = Math.max(1, opts.maxCacheEntries ?? 5_000);
@@ -110,8 +119,8 @@ export class BalanceService {
     this.now = opts.now ?? Date.now;
     this.sweeper = setInterval(() => this.sweep(), opts.sweepIntervalMs ?? 1_000);
     this.sweeper.unref();
-    for (const id of balanceChainIds(opts.servedChainIds)) {
-      this.plans.set(`evm:${id}`, plan(id));
+    for (const id of balanceChainIds(opts.servedChainIds, this.catalog)) {
+      this.plans.set(`evm:${id}`, plan(id, this.catalog));
       this.limits.set(
         id,
         new ConcurrencyLimit({

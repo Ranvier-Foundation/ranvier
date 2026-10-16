@@ -1,5 +1,6 @@
 /**
- * LOCAL TEST HARNESS ONLY (ADR 0013). Never imported by `src/`, never built into `dist/`.
+ * LOCAL TEST HARNESS ONLY (ADR 0013).
+ * Lives in `src/harness/`: excluded from the build (`dist/`), never imported by production code.
  *
  * The pinned table of the harness contracts on a fresh anvil (chain 31337): the CREATE2 results
  * from `contracts/test/harness/HarnessConfig.sol`, also listed in docs/runbooks/local-harness.md,

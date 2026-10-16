@@ -1,5 +1,6 @@
 /**
- * LOCAL TEST HARNESS ONLY (ADR 0013, section 4). Never imported by `src/`.
+ * LOCAL TEST HARNESS ONLY (ADR 0013, section 4).
+ * Lives in `src/harness/`: excluded from the build (`dist/`), never imported by production code.
  *
  * The harness signs with PUBLIC anvil keys, so it must never reach a real network. Two checks, in
  * this order, before any client exists:

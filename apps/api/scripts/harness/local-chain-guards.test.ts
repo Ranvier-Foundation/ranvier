@@ -14,21 +14,30 @@ import {
   LOCAL_DEV_CHAIN_ID,
   LOCAL_DEV_CHAIN_KEY,
   localDevAddresses,
+  localDevToken,
 } from '@ranvier/chains/local-dev';
-import { describe, expect, it } from 'vitest';
+import { quoteFee } from '@ranvier/fees';
+import type { TokenRef } from '@ranvier/types';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import { DefiLlamaPriceOracle } from '../../src/adapters/prices/defillama.js';
+import { assertCatalogExtendsRegistry, ChainCatalogError } from '../../src/chain-catalog.js';
+import { BalanceService } from '../../src/domain/balances.js';
+import { harnessCatalog } from '../../src/harness/catalog.js';
+import { productionSourceFiles, REPO } from './build-output.js';
 import {
   LOCAL_SIGNER_DEFAULT_CHAINS as REEXPORTED_DEFAULTS,
   LocalKeySigner,
   NEVER_LOCAL_CHAINS,
 } from '../../src/adapters/signers/local-key.js';
-import { buildServer } from '../../src/http/server.js';
+import { buildServer, buildServerWithCatalog, type ServerDeps } from '../../src/http/server.js';
 import { LOCAL_SIGNER_DEFAULT_CHAINS, mainnetRulesApply } from '../../src/mainnet-rules.js';
 import {
   TRUSTED_ROUTERS,
   ZEROX_ALLOWANCE_HOLDER,
   ZEROX_SETTLERS,
 } from '../../src/trusted-routers.js';
-import { devAccounts, publicAnvilKey } from './dev-accounts.js';
+import { devAccounts, publicAnvilKey } from '../../src/harness/dev-accounts.js';
 
 const LOCALS = localDevAddresses();
 const evmIds = (): number[] =>
@@ -119,5 +128,85 @@ describe('the signing guards are unchanged (asserted, never widened)', () => {
     });
     expect(signer.canSign(LOCAL_DEV_CHAIN_ID)).toBe(true);
     for (const id of [...evmIds(), 84532]) expect(signer.canSign(id)).toBe(false);
+  });
+});
+
+describe('the harness catalog reaches only what the harness entry builds (ADR 0013, section 2)', () => {
+  const routing = { providers: [], servedChainIds: [1, 8453, 42161, 31337] };
+
+  it('is the registry, unchanged, plus LOCAL_DEV_CHAIN', () => {
+    const catalog = harnessCatalog();
+    expect(() => assertCatalogExtendsRegistry(catalog)).not.toThrow();
+    expect(catalog.chains.slice(0, CHAINS.length)).toEqual([...CHAINS]);
+    expect(catalog.chains.slice(CHAINS.length)).toEqual([LOCAL_DEV_CHAIN]);
+    expect(catalog.listTokens(LOCAL_DEV_CHAIN_KEY).map((t) => t.symbol)).toEqual([
+      'ETH',
+      'hUSDC',
+      'hWETH',
+    ]);
+  });
+
+  it('production buildServer refuses it, as a catalog and inside a balance service', () => {
+    const catalog = harnessCatalog();
+    expect(() => buildServer({ ...routing, catalog } as unknown as ServerDeps)).toThrow(
+      ChainCatalogError,
+    );
+    const reader = { canRead: () => true, readBalances: () => Promise.reject(new Error('no')) };
+    const service = new BalanceService({ reader, servedChainIds: [31337], catalog });
+    expect(() => buildServer({ ...routing, balances: { service } })).toThrow(
+      'the balance service was built on another chain catalog',
+    );
+    service.close();
+  });
+
+  it('control: through the harness path it is listed after the registry', async () => {
+    const app = buildServerWithCatalog(routing, harnessCatalog());
+    const chains = await app.inject({ method: 'GET', url: '/v1/chains' });
+    expect(chains.json<{ key: string }[]>().map((c) => c.key)).toEqual([
+      'evm:1',
+      'evm:8453',
+      'evm:42161',
+      'evm:31337',
+    ]);
+    await app.close();
+  });
+
+  it('the fee schedule and the real oracle never see the local chain', async () => {
+    const usdc: TokenRef = { chain: LOCAL_DEV_CHAIN_KEY, address: localDevToken('hUSDC').address };
+    const weth: TokenRef = { chain: LOCAL_DEV_CHAIN_KEY, address: localDevToken('hWETH').address };
+    const native: TokenRef = { chain: LOCAL_DEV_CHAIN_KEY, address: 'native' };
+    const fee = (sellToken: TokenRef, buyToken: TokenRef) =>
+      quoteFee({
+        sellToken,
+        buyToken,
+        sellAmount: 10n ** 6n,
+        usdValue: 100_00n,
+        isFirstSwap: false,
+      });
+    expect(fee(usdc, usdc).reason).toBe('tier-under-10k'); // never the stablecoin rate
+    expect(fee(native, weth).reason).toBe('tier-under-10k'); // never a free wrap
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const oracle = new DefiLlamaPriceOracle({ fetch });
+    for (const token of [usdc, weth, native]) {
+      await expect(oracle.price(token, AbortSignal.timeout(1_000))).rejects.toThrow(
+        'unknown chain',
+      );
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('no production source calls buildServerWithCatalog (only server.ts defines it)', () => {
+    const callers = productionSourceFiles(REPO)
+      .filter((f) => /\.(?:ts|tsx|mts|cts|js|mjs)$/.test(f) && !/\.test\.[cm]?[jt]sx?$/.test(f))
+      // A use (call, import or export), not a mention in a comment written as `code`.
+      .filter((f) => /(?<!`)\bbuildServerWithCatalog\b(?!`)/.test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(REPO.length));
+    expect(callers).toEqual(['apps/api/src/http/server.ts']);
+  });
+
+  it('NEVER_LOCAL_CHAINS is exactly the mainnets it was (unchanged by the catalog)', () => {
+    expect([...NEVER_LOCAL_CHAINS].sort((a, b) => a - b)).toEqual([
+      1, 10, 56, 137, 8453, 42161, 43114,
+    ]);
   });
 });
