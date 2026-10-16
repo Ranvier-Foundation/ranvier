@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "guard:tokens": "pnpm --filter @ranvier/web guard:tokens",
-    "e2e": "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3199} pnpm --filter @ranvier/web build && pnpm --filter @ranvier/web e2e"
+    "e2e": "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3199} pnpm --filter @ranvier/web build && pnpm --filter @ranvier/web e2e",
+    "harness:smoke": "pnpm --filter @ranvier/api harness:smoke"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

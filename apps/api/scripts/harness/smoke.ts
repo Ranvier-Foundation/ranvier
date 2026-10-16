@@ -51,7 +51,7 @@ import {
   type QuoteTiming,
   type SignedAnswerEcho,
 } from '../../src/domain/quote-answer.js';
-import { buildRoutePolicy, type RoutePolicy } from '../../src/domain/route-policy.js';
+import { buildRoutePolicy } from '../../src/domain/route-policy.js';
 import { UnsafeRouteError, vetRoute, type VettedRoute } from '../../src/domain/route-safety.js';
 import {
   buildSignedSwap,
