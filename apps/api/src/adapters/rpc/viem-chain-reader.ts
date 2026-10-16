@@ -24,6 +24,7 @@ import {
   type ChainReader,
   type EvmAddress,
 } from '../../ports/chain-reader.js';
+import type { FeeWrapperReader, FeeWrapperState } from '../../ports/fee-wrapper-reader.js';
 
 /**
  * Balance reads over JSON-RPC with viem (ADR 0009).
@@ -57,6 +58,17 @@ const MULTICALL3_ABI = parseAbi([
   'function getCurrentBlockTimestamp() view returns (uint256 timestamp)',
   'function getEthBalance(address addr) view returns (uint256 balance)',
 ]);
+
+/** The FeeWrapper views the startup signer check reads (ADR 0005); EIP-5267 `eip712Domain`. */
+export const FEE_WRAPPER_VIEW_ABI = parseAbi([
+  'function feeSigner() view returns (address)',
+  'function eip712Domain() view returns (bytes1 fields, string name, string version, uint256 chainId, address verifyingContract, bytes32 salt, uint256[] extensions)',
+]);
+
+/** An ABI-encoded `address` return: one 32-byte word with the top 12 bytes zero. */
+const ADDRESS_WORD = /^0x0{24}([0-9a-fA-F]{40})$/;
+/** Contract code as `eth_getCode` returns it: whole bytes of hex. */
+const CODE = /^0x(?:[0-9a-fA-F]{2})*$/;
 
 /**
  * Chains whose viem definition lists Multicall3 at the canonical address. A chain without it is
@@ -248,7 +260,7 @@ function methodOf(init: RequestInit | undefined): string {
   return String(body.method);
 }
 
-export class ViemChainReader implements ChainReader {
+export class ViemChainReader implements ChainReader, FeeWrapperReader {
   private readonly chains = new Map<number, ChainState>();
   private readonly requestTimeoutMs: number;
   private readonly reverifyAfterMs: number;
@@ -351,6 +363,85 @@ export class ViemChainReader implements ChainReader {
     } catch (err: unknown) {
       throw this.failure(chain, err, signal);
     }
+  }
+
+  /**
+   * The FeeWrapper's code, `feeSigner()` and `eip712Domain()` at one block, through the same
+   * proved endpoints, fallback, timeouts and redirect refusal as balance reads. A call that
+   * reverts or returns malformed data is null (the caller refuses); any other failure is a
+   * `ChainReadError`, never a guess. The domain's chain ID is `block.chainid` inside the call, so
+   * it proves the chain of the endpoint that answered it as well.
+   */
+  async readFeeWrapper(
+    chainId: number,
+    wrapper: EvmAddress,
+    signal: AbortSignal,
+  ): Promise<FeeWrapperState> {
+    const chain = this.chains.get(chainId);
+    if (!chain) throw new ChainReadError('rpc_unavailable', 'chain_not_configured');
+    if (signal.aborted) throw new ChainReadError('timeout', 'aborted');
+    if (!this.canRead(chain.chainId)) {
+      void this.verifyPending(chain, false);
+      throw new ChainReadError('rpc_unavailable', 'no_verified_endpoint');
+    }
+    const ctx: ReadContext = { signal, served: [] };
+    try {
+      return await this.context.run(ctx, () => this.wrapperRead(chain, wrapper, signal));
+    } catch (err: unknown) {
+      throw this.failure(chain, err, signal, 'fee wrapper read');
+    }
+  }
+
+  private async wrapperRead(
+    chain: ChainState,
+    wrapper: EvmAddress,
+    signal: AbortSignal,
+  ): Promise<FeeWrapperState> {
+    const blockNumber = quantity(
+      await chain.client.request({ method: 'eth_blockNumber' }, { signal }),
+      'malformed_block_number',
+    );
+    if (blockNumber === 0n || blockNumber > MAX_BLOCK_NUMBER) {
+      throw new ChainReadError('rpc_unavailable', 'implausible_block_number');
+    }
+    const at = toHex(blockNumber);
+    const call = (functionName: 'feeSigner' | 'eip712Domain'): Promise<Hex | null> =>
+      chain.client
+        .request(
+          {
+            method: 'eth_call',
+            params: [
+              {
+                to: wrapper,
+                data: encodeFunctionData({ abi: FEE_WRAPPER_VIEW_ABI, functionName }),
+              },
+              at,
+            ],
+          },
+          { signal },
+        )
+        .then(
+          (v) => (typeof v === 'string' && /^0x[0-9a-fA-F]*$/.test(v) ? (v as Hex) : null),
+          (err: unknown) => {
+            if (isRevert(err)) return null;
+            throw err;
+          },
+        );
+    const [code, signerRaw, domainRaw] = await Promise.all([
+      chain.client.request({ method: 'eth_getCode', params: [wrapper, at] }, { signal }),
+      call('feeSigner'),
+      call('eip712Domain'),
+    ]);
+    if (typeof code !== 'string' || !CODE.test(code)) {
+      throw new ChainReadError('rpc_unavailable', 'malformed_code');
+    }
+    const signerMatch = signerRaw === null ? null : ADDRESS_WORD.exec(signerRaw);
+    return {
+      blockNumber,
+      hasCode: code.length > 2,
+      feeSigner: signerMatch ? (`0x${signerMatch[1]?.toLowerCase() ?? ''}` as EvmAddress) : null,
+      domain: domainRaw === null ? null : decodeDomain(domainRaw),
+    };
   }
 
   private async read(
@@ -537,14 +628,19 @@ export class ViemChainReader implements ChainReader {
   }
 
   /** Maps any failure to a `ChainReadError`, logging a non-secret description. */
-  private failure(chain: ChainState, err: unknown, signal: AbortSignal): ChainReadError {
+  private failure(
+    chain: ChainState,
+    err: unknown,
+    signal: AbortSignal,
+    what = 'balance read',
+  ): ChainReadError {
     if (signal.aborted) return new ChainReadError('timeout', 'deadline');
     if (err instanceof ChainReadError) {
-      this.log?.warn({ chainId: chain.chainId, reason: err.reason }, 'balance read refused');
+      this.log?.warn({ chainId: chain.chainId, reason: err.reason }, `${what} refused`);
       return err;
     }
     const code = hasTimeout(err) ? 'timeout' : 'rpc_unavailable';
-    this.log?.warn({ chainId: chain.chainId, ...describeError(err) }, 'balance read failed');
+    this.log?.warn({ chainId: chain.chainId, ...describeError(err) }, `${what} failed`);
     return new ChainReadError(code, code === 'timeout' ? 'rpc_timeout' : 'rpc_error');
   }
 
@@ -651,6 +747,25 @@ export class ViemChainReader implements ChainReader {
     } catch (err: unknown) {
       this.log?.warn({ ...where, ...describeError(err) }, 'RPC endpoint unreachable; will retry');
     }
+  }
+}
+
+/** `eip712Domain()` return data, or null when it does not decode. */
+function decodeDomain(data: Hex): FeeWrapperState['domain'] {
+  try {
+    const [, name, version, chainId, verifyingContract] = decodeFunctionResult({
+      abi: FEE_WRAPPER_VIEW_ABI,
+      functionName: 'eip712Domain',
+      data,
+    });
+    return {
+      name,
+      version,
+      chainId,
+      verifyingContract: verifyingContract.toLowerCase() as EvmAddress,
+    };
+  } catch {
+    return null;
   }
 }
 

@@ -90,7 +90,7 @@ RPC URLs often carry an API key (in the path, the query or the user info). No UR
 ## Consequences
 
 - Balances add load and latency to our API, and depend on our RPC budget. The cache, merging and per-chain limits bound the concurrency, not the cost of an attacker cycling addresses; edge per-IP limits and a global ceiling are a release gate.
-- A provider outage on every endpoint of a chain shows as `balances: false` and `503 rpc_unavailable`; quoting is unaffected (it does not use these RPCs).
+- A provider outage on every endpoint of a chain shows as `balances: false` and `503 rpc_unavailable`; quoting is unaffected (it does not use these RPCs). Since ADR 0005's on-chain signer check, **startup** with a signer does use them: the API refuses to start until it has read `feeSigner()` on every signing chain. At runtime a failed re-check keeps the last result, so an outage still does not stop quoting.
 - Production must set `RPC_URLS_EVM_<chainId>` for every served chain; the startup warning and the runbook release check catch a deployment that forgot.
 - A malicious provider can show wrong balances. Accepted: display only, and the review screen will re-verify from the wallet and simulation.
 - New EVM chains need a curated token list and RPC variables to get balances; a chain without Multicall3 in viem's definition gets the slower individual-call path automatically.

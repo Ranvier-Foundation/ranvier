@@ -6,6 +6,7 @@ import { awsKmsTransport, KmsSigner } from './adapters/signers/kms.js';
 import { ZeroXProvider } from './adapters/providers/zero-x.js';
 import { loadConfig } from './config.js';
 import { balanceChainIds, BalanceService } from './domain/balances.js';
+import { FeeSignerMonitor, signingChainIds } from './fee-signer-check.js';
 import { buildServer } from './http/server.js';
 import type { QuoteProvider } from './ports/quote-provider.js';
 import { loadRpcConfig } from './rpc-config.js';
@@ -27,18 +28,23 @@ if (config.ZEROX_API_KEY && config.FEE_WRAPPER_ADDRESS) {
   );
 }
 
-// Fails startup (rejects) on a bad signer configuration or any KMS error. Credentials come
-// from the default AWS provider chain; the SDK's own retries are off (KmsSigner retries once).
-// Once RPC access exists, compare FeeWrapper.feeSigner() with the signer address here
-// (ADR 0005).
+// Fails startup (rejects) on a bad signer configuration, a published development signer off
+// chain 31337, or any KMS error. Credentials come from the default AWS provider chain; the SDK's
+// own retries are off (KmsSigner retries once).
 const signing = await setUpSigning(config, {
   policy: TRUSTED_ROUTERS,
   kmsTransport: (region) => awsKmsTransport(new KMSClient({ region, maxAttempts: 1 })),
 });
+// The chains quotes are really signed for; FeeWrapper.feeSigner() is checked on each below.
+const signChains = signing
+  ? signingChainIds(config.ZEROX_CHAIN_IDS, signing.signer, TRUSTED_ROUTERS)
+  : [];
 
 // Balance reads (ADR 0009): our own RPC endpoints, never the browser's. Fails startup on an
-// invalid RPC_URLS_EVM_* variable (the error names the variable, never its value).
-const rpc = loadRpcConfig(process.env, balanceChainIds(config.ZEROX_CHAIN_IDS));
+// invalid RPC_URLS_EVM_* variable (the error names the variable, never its value). The signing
+// chains need an endpoint too, for the feeSigner check; today every one is a balance chain.
+const balanceChains = balanceChainIds(config.ZEROX_CHAIN_IDS);
+const rpc = loadRpcConfig(process.env, [...new Set([...balanceChains, ...signChains])]);
 // Reader log lines carry chain IDs, endpoint labels and error classes: never URLs or addresses.
 // `app` is assigned below, before anything can log.
 const readerLog: ReaderLog = {
@@ -52,6 +58,22 @@ const reader = new ViemChainReader({
   rank: config.RPC_RANK_INTERVAL_MS > 0 ? { intervalMs: config.RPC_RANK_INTERVAL_MS } : false,
   log: readerLog,
 });
+// FeeWrapper.feeSigner(), its code and EIP-712 domain on every signing chain (ADR 0005): checked
+// before the server listens (fail closed), then every 10 minutes; a chain that stops matching is
+// not signed for until it matches again.
+const feeSigners = signing
+  ? new FeeSignerMonitor({
+      reader,
+      chainIds: signChains,
+      feeWrapper: signing.feeWrapper,
+      signer: signing.signer.address,
+      log: {
+        info: (obj, msg) => app.log.info({ component: 'fee-signer-check', ...obj }, msg),
+        warn: (obj, msg) => app.log.warn({ component: 'fee-signer-check', ...obj }, msg),
+        error: (obj, msg) => app.log.error({ component: 'fee-signer-check', ...obj }, msg),
+      },
+    })
+  : undefined;
 const balanceService = new BalanceService({
   reader,
   servedChainIds: config.ZEROX_CHAIN_IDS,
@@ -71,7 +93,9 @@ const app = buildServer({
   webOrigins: config.WEB_ORIGINS,
   servedChainIds: config.ZEROX_CHAIN_IDS,
   balances: { service: balanceService, deadlineMs: config.BALANCES_DEADLINE_MS },
-  ...(signing ? { signing } : {}),
+  ...(signing && feeSigners
+    ? { signing: { ...signing, signer: feeSigners.gate(signing.signer) } }
+    : {}),
 });
 
 if (rpc.publicDefaultChains.length > 0) {
@@ -89,6 +113,17 @@ if (rpc.ignored.length > 0) {
 await reader.verifyEndpoints();
 setInterval(() => void reader.verifyEndpoints(), 30_000).unref();
 
+if (feeSigners) {
+  try {
+    await feeSigners.verifyAtStartup();
+  } catch (err: unknown) {
+    // Addresses and chain IDs only (all public); never a URL.
+    app.log.error({ err: err instanceof Error ? err.message : String(err) }, 'startup refused');
+    process.exit(1);
+  }
+  feeSigners.start();
+}
+
 // The signer address and key ARN only: never credentials.
 app.log.info(
   {
@@ -97,7 +132,8 @@ app.log.info(
     signer: signing?.signer.address ?? null,
     signerKind: signing?.signer.kind ?? null,
     kmsKeyArn: signing?.signer instanceof KmsSigner ? signing.signer.keyArn : null,
-    balanceChains: [...rpc.endpoints.keys()].filter((id) => reader.canRead(id)),
+    signingChains: signChains,
+    balanceChains: balanceChains.filter((id) => reader.canRead(id)),
   },
   'quote service configured',
 );

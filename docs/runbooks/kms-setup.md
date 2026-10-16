@@ -1013,7 +1013,7 @@ AWS_REGION=<region>
 
 When `NODE_ENV=production`, or when any chain in `ZEROX_CHAIN_IDS` is not a known testnet, the API requires both a full key ARN and `KMS_EXPECTED_SIGNER_ADDRESS`. It refuses to start if the key derives to a different address. At startup it logs `signer`, `signerKind: "kms"` and `kmsKeyArn`.
 
-Before going live, check that the logged address equals `cast call <wrapper> 'feeSigner()(address)'` on every chain in `ZEROX_CHAIN_IDS`. An automatic check is a planned follow-up (ADR 0005).
+At startup the API also reads `feeSigner()`, the code and the EIP-712 domain of `FEE_WRAPPER_ADDRESS` on every signing chain through its RPC endpoints, and refuses to start unless they match (`startup refused`, naming the chain and the reason). It re-checks every 10 minutes and stops signing on a chain that no longer matches (log line `FeeWrapper no longer matches the signer`; alert on it). A signer address that is a published development address (anvil's mnemonic accounts, the precompile range, tooling and burn addresses) is refused off chain 31337, for `KMS_EXPECTED_SIGNER_ADDRESS` before KMS is called. Before going live, still compare the logged address with `cast call <wrapper> 'feeSigner()(address)'` yourself (ADR 0005).
 
 ## Deletion
 

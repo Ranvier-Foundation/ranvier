@@ -39,7 +39,7 @@ describe('harness isolation', () => {
       scriptsRefs(f, readFileSync(f, 'utf8')).map((why) => `${f}: ${why}`),
     );
     expect(offenders).toEqual([]);
-  });
+  }, 60_000); // parses every src/ file; slow when turbo runs every package's tests at once
 
   it.each([
     "import { x } from '../scripts/harness/pinned.js';",

@@ -107,7 +107,7 @@ At startup with `KMS_KEY_ID`, every chain in `ZEROX_CHAIN_IDS` must pass this ga
 - **Key administrators.** Only the break-glass role may change the key policy, create grants or replicate the key (and so break-glass can, by design, give itself `Sign`). The admin role can manage the key, but it cannot sign or change the policy. Deletion needs the full 30-day wait.
 - **Response.** Detach or deny `kms:Sign` for the API role, or disable the key. Signing stops at once, and quotes fail with `503 signing_unavailable`. If the key policy itself may have been changed, rotate the key (below) and pause the wrapper through the guardian if needed.
 - **Detection.** CloudTrail records every `Sign`, `GetPublicKey`, `DescribeKey` and key-policy change. Alert on `Sign` calls from any principal other than the API role, on `Sign` volume far above the quote rate, and on any `PutKeyPolicy`, `CreateGrant`, `DisableKey`, `ScheduleKeyDeletion` or alias change (runbook).
-- **Wrong or swapped key.** In production and on mainnets the API takes a key ARN, not an alias, and refuses to start unless the key derives to `KMS_EXPECTED_SIGNER_ADDRESS`. The planned follow-up check against `FeeWrapper.feeSigner()` (below) will also compare the configured address with the chain.
+- **Wrong or swapped key.** In production and on mainnets the API takes a key ARN, not an alias, and refuses to start unless the key derives to `KMS_EXPECTED_SIGNER_ADDRESS`. The on-chain check against `FeeWrapper.feeSigner()` (below) also compares the signer with every signing chain before the API listens.
 - **A KMS or SDK bug** that returns a wrong signature fails closed through self-verification. It is never offered to a user.
 
 ## Key rotation
@@ -118,7 +118,7 @@ The fee signer is changed only through `FeeWrapper.setFeeSigner`, which only the
 2. Record the new address from the new key's ARN (runbook, step 3), and confirm it with the smoke test on the API host before using it on chain.
 3. Propose `setFeeSigner(<new address>)` on every chain's wrapper through the admin multisig. During the timelock, the old key keeps signing.
 4. When the change executes on every chain, set `KMS_KEY_ID` to the new key ARN and `KMS_EXPECTED_SIGNER_ADDRESS` to the new address, and restart the API. Quotes signed by the old key in flight fail on chain at worst, and the user re-quotes. This needs no API change, because quotes live for 60 seconds.
-5. Confirm with the startup log line (and, once built, the on-chain check) that the API address equals `feeSigner()`. Then disable the old key: remove `kms:Sign` from its policy and run `aws kms disable-key`. Keep it disabled for at least the audit period before scheduling deletion (the waiting period is 30 days).
+5. Confirm with the startup log line and the on-chain check (the API refuses to start unless its address equals `feeSigner()` on every signing chain) that the API address equals `feeSigner()`. Then disable the old key: remove `kms:Sign` from its policy and run `aws kms disable-key`. Keep it disabled for at least the audit period before scheduling deletion (the waiting period is 30 days).
 
 In an emergency (key policy compromised), skip the wait at step 3 only as far as the timelock allows, and pause the wrapper through the guardian in the meantime.
 
@@ -127,9 +127,20 @@ In an emergency (key policy compromised), skip the wait at step 3 only as far as
 - One customer managed key costs about $1 per month. Asymmetric `Sign` requests are not in the KMS free tier and cost about $0.15 per 10,000 at the time of writing (check current AWS pricing). One signed quote is one `Sign` call. Unsigned quotes and wrap/unwrap quotes cost nothing.
 - `Sign` with ECC keys counts against one shared per-account, per-Region quota for ECC cryptographic operations, together with every other ECC operation in that account and Region. We could not pin the default value: the AWS quotas page gives 1,000 requests per second in its table and 300 in its prose. Read the real value in Service Quotas (AWS KMS, "Cryptographic operations (ECC) request rate") for your account and Region. A dedicated AWS account for the signer stops other workloads from using up the quota, and stops anyone from exhausting it against us. `GetPublicKey` and `DescribeKey` have their own quotas and run only at startup. The in-memory limit keeps one API instance well below any plausible quota. Request an increase before running many instances.
 
+## On-chain signer check (built 2026-10-16, ADR 0013 work breakdown row 5)
+
+`FeeSignerMonitor` (`apps/api/src/fee-signer-check.ts`), started from `main.ts`:
+
+- **Which chains.** Every chain the API really signs for: `ZEROX_CHAIN_IDS` filtered by `canSignChain` with `TRUSTED_ROUTERS` (`signingChainIds`). In production with a KMS key that is every quoted chain; a local key signs no production chain (no testnet has a trusted router), so nothing is read.
+- **What must hold**, read at one block through the balance reader's endpoints (`RPC_URLS_EVM_<chainId>`, else the public development defaults, with the same chain ID proof, timeouts and redirect refusal as ADR 0009; a signing chain without a token list gets an endpoint too): code at `FEE_WRAPPER_ADDRESS`; `feeSigner()` equal to the signer address (any case); `eip712Domain()` reporting `Ranvier FeeWrapper`, version `1`, that chain ID (`block.chainid` inside the call, so it also proves the chain of the endpoint that answered) and the wrapper itself as `verifyingContract`. A view that reverts or returns malformed data counts as a mismatch.
+- **Startup: fail closed.** The API does not listen until every signing chain matches. A mismatch refuses at once with the chain, the reason and the on-chain `feeSigner` (all public). A chain that cannot be read is retried up to three times, two seconds apart, with its endpoints asked to prove their chain again in between; then startup is refused. No new configuration: the wrapper address is `FEE_WRAPPER_ADDRESS`, the endpoints are the existing RPC variables.
+- **Runtime: cached, re-checked every 10 minutes.** A confirmed mismatch stops signing on that chain (`503 signing_unavailable`) until a later check matches, logged at error level (`FeeWrapper no longer matches the signer; signing stopped on this chain`; alert on it). A failed re-check keeps the last confirmed result and logs a warning. Why: `feeSigner` changes only through the admin multisig behind its timelock (hours), so ten minutes is enough to notice a rotation; the wrapper verifies every signature on chain, so a stale "matches" costs a reverted transaction at worst, never funds; and making signing depend on transient RPC health would couple quoting to RPC availability, which ADR 0009 keeps apart.
+- **What a lying RPC can do.** It can refuse startup or stop signing on a chain (availability), or answer "matches" for a wrapper that does not match (the situation before this check existed). It cannot make the API sign for another wrapper or chain: the signed domain still uses the configured address and the request's chain.
+
+Also at startup (ADR 0013, section 4): the signer address (local key or KMS) and `KMS_EXPECTED_SIGNER_ADDRESS` are refused when they are a published development address and any quoted chain is not 31337 (`apps/api/src/published-addresses.ts`, the same list as `Deploy.s.sol`'s `isPublishedDevAddress`). `KMS_EXPECTED_SIGNER_ADDRESS` is checked before any KMS call.
+
 ## Follow-up (not built)
 
-- **On-chain signer check at startup.** Once the API has RPC access, `setUpSigning` (`apps/api/src/signer-setup.ts`) should call `FeeWrapper.feeSigner()` on every signing chain and refuse to start if any differs from `signer.address`. `setUpSigning` already holds the signer, its address, the wrapper address and the chain list, so this is one call per chain and a comparison.
 - An alert on `integrity` signing failures and on sustained `busy` or `timeout` failures, once metrics exist.
 
 ## Consequences
