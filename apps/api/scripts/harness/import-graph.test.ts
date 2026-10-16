@@ -236,6 +236,23 @@ describe(
       expect(reached()).toEqual([]);
     });
 
+    it('production code importing apps/api/src/harness/ is caught by path alone (PR 4b)', () => {
+      // The harness file itself imports nothing from local-dev: only the forbidden path catches it.
+      write('apps/api/src/harness/plain.ts', 'export const S = 1;\n');
+      write(
+        'apps/api/src/uses-harness.ts',
+        "import { S } from './harness/plain.js';\nexport { S };\n",
+      );
+      try {
+        expect(reached()).toEqual([
+          'apps/api/src/uses-harness.ts -> apps/api/src/harness/plain.ts',
+        ]);
+      } finally {
+        rmSync(join(root, 'apps/api/src/uses-harness.ts'));
+        rmSync(join(root, 'apps/api/src/harness/plain.ts'));
+      }
+    });
+
     it.each([
       ['P4 workers', 'apps/workers/src/health.ts'],
       ['P5 an API entry other than main.ts (kms-smoke.ts)', 'apps/api/src/kms-smoke.ts'],
