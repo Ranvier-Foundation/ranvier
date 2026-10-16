@@ -245,6 +245,16 @@ describe('assertCatalogExtendsRegistry refuses anything but registry + local or 
   });
 });
 
+describe('buildServerWithCatalog validates the catalog it is given', () => {
+  it.each([
+    ['a mainnet', extend([localChain({ key: 'evm:10' })], [])],
+    ['a replaced registry chain', { ...REGISTRY_CATALOG, chains: CHAINS.slice(1) }],
+    ['stablecoins', extend([localChain({ stablecoins: { tUSD: DOLLAR } })])],
+  ])('refuses %s before building anything', (_name, catalog) => {
+    expect(() => buildServerWithCatalog({ providers: [] }, catalog)).toThrow(ChainCatalogError);
+  });
+});
+
 describe('production buildServer serves the registry only', () => {
   it('refuses a catalog passed in (only possible through a cast)', () => {
     const harnessShaped = { ...deps(), catalog: extend([localChain()]) };

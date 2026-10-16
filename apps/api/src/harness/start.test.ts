@@ -134,7 +134,20 @@ describe('refusals before any RPC request or listen (environment)', () => {
     await refusedBeforeAnything({ ZEROX_CHAIN_IDS: value }, 'ZEROX_CHAIN_IDS must be exactly');
   });
 
-  it.each(FORBIDDEN_VARIABLES.flatMap((name) => [[name, 'x'] as const, [name, ''] as const]))(
+  // Literal names, not the module's own list: dropping a name from it must fail here.
+  const forbidden = [
+    'KMS_KEY_ID',
+    'KMS_EXPECTED_SIGNER_ADDRESS',
+    'ZEROX_API_KEY',
+    'QUOTE_SIGNER_PRIVATE_KEY',
+    'LOCAL_SIGNER_CHAIN_IDS',
+  ];
+
+  it('the forbidden list is exactly these variables', () => {
+    expect([...FORBIDDEN_VARIABLES].sort()).toEqual([...forbidden].sort());
+  });
+
+  it.each(forbidden.flatMap((name) => [[name, 'x'] as const, [name, ''] as const]))(
     '%s=%j (even empty)',
     async (name, value) => {
       await refusedBeforeAnything({ [name]: value }, `${name} is set`);
