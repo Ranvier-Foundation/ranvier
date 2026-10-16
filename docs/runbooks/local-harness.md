@@ -6,7 +6,7 @@ Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(p
 
 - **Chain ID 31337, loopback only.** Start anvil with `--chain-id 31337 --host 127.0.0.1`. Every RPC URL the harness uses must be `http://127.0.0.1:<port>` or `http://[::1]:<port>`. 31337 is not reserved, so an endpoint answering 31337 elsewhere is refused all the same.
 - **Published development accounts only.** Accounts come from anvil's published mnemonic (`test test test test test test test test test test test junk`). They are public, worthless and allowed only on 31337.
-  - Never use them on a testnet or mainnet: off 31337, `Deploy.s.sol` refuses them in every role and as an initial router, before anything is broadcast (`PublishedDevAddress(role, account)`). It also refuses `address(0)`, `0x…01`, `0x…02` and the CREATE2 factory, and any `INITIAL_ROUTERS` on chains 1, 8453 and 42161 (`InitialRoutersRefused`).
+  - Never use them on a testnet or mainnet: off 31337, `Deploy.s.sol` refuses them in every role and as an initial router, before anything is broadcast (`PublishedDevAddress(role, account)`). It also refuses every address up to `0x…01ff`, the CREATE2 factory, forge's default sender and test contract and the burn addresses, and any `INITIAL_ROUTERS` outside 84532, 11155111, 421614 and 31337 (`InitialRoutersRefused`).
   - Never put any other key into the harness.
   - Commands below use `--unlocked --sender <address>`, so no key is typed or stored.
 - **Ports.** Anvil 8645, API 4310, web 3310, all on 127.0.0.1. **Never use or stop port 3000** (the owner's dev server). The harness only stops processes it started.
@@ -158,18 +158,18 @@ The owner decided against fork mode for now. It needs an archive RPC (public end
 
 ## Troubleshooting
 
-| Symptom                                                                | Cause and fix                                                                                                    |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Harness API refuses: chain ID is not 31337, or the RPC is not loopback | anvil was started without `--chain-id 31337`, or a non-loopback URL is set. Restart anvil and fix the URL.       |
-| Harness API refuses: `RPC_URLS_EVM_<id>` for another chain             | A variable was inherited from your shell. Unset it.                                                              |
-| Harness API refuses: `feeSigner()` differs from the signer             | The wrapper was deployed with another `FEE_SIGNER`. Redeploy on a fresh anvil.                                   |
-| Swap reverts `0x1fb09b80` (`NonceAlreadyUsed`)                         | The same signed quote was sent twice. Ask for a new quote.                                                       |
-| Swap reverts `QuoteExpired`                                            | Chain time is past the deadline (for example after `evm_increaseTime`). Ask for a new quote.                     |
-| `harness:up` says a port is in use                                     | Something else holds 8645, 4310 or 3310. Stop it yourself; the harness will not.                                 |
-| Quotes fail with `below_oracle_value`                                  | Expected on the "under oracle" test pair. On a normal pair, the oracle constants and the settler rates disagree. |
-| `DeployHarness` reverts `MockAddressChanged`                           | A mock's code changed, so its CREATE2 address moved. Update `HarnessConfig.sol` and the address table.           |
-| `DeployHarness` reverts `InitialRoutersSetByHarness`                   | `INITIAL_ROUTERS` is set in your shell. Unset it: the harness allowlists its own holder.                         |
-| A deploy reverts `PublishedDevAddress` or `InitialRoutersRefused`      | The role guard: a published address in a role off 31337, or initial routers on a mainnet. Fix the environment.   |
+| Symptom                                                                | Cause and fix                                                                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Harness API refuses: chain ID is not 31337, or the RPC is not loopback | anvil was started without `--chain-id 31337`, or a non-loopback URL is set. Restart anvil and fix the URL.                |
+| Harness API refuses: `RPC_URLS_EVM_<id>` for another chain             | A variable was inherited from your shell. Unset it.                                                                       |
+| Harness API refuses: `feeSigner()` differs from the signer             | The wrapper was deployed with another `FEE_SIGNER`. Redeploy on a fresh anvil.                                            |
+| Swap reverts `0x1fb09b80` (`NonceAlreadyUsed`)                         | The same signed quote was sent twice. Ask for a new quote.                                                                |
+| Swap reverts `QuoteExpired`                                            | Chain time is past the deadline (for example after `evm_increaseTime`). Ask for a new quote.                              |
+| `harness:up` says a port is in use                                     | Something else holds 8645, 4310 or 3310. Stop it yourself; the harness will not.                                          |
+| Quotes fail with `below_oracle_value`                                  | Expected on the "under oracle" test pair. On a normal pair, the oracle constants and the settler rates disagree.          |
+| `DeployHarness` reverts `MockAddressChanged`                           | A mock's code changed, so its CREATE2 address moved. Update `HarnessConfig.sol` and the address table.                    |
+| `DeployHarness` reverts `InitialRoutersSetByHarness`                   | `INITIAL_ROUTERS` is set in your shell. Unset it: the harness allowlists its own holder.                                  |
+| A deploy reverts `PublishedDevAddress` or `InitialRoutersRefused`      | The role guard: a published address in a role off 31337, or initial routers off the listed testnets. Fix the environment. |
 
 ## What a green run means
 

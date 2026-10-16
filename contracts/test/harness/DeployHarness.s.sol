@@ -46,7 +46,7 @@ contract DeployHarness is Deploy {
     ///         GUARDIAN_ADDRESS. INITIAL_ROUTERS must be unset: the harness allowlists its own holder.
     function run() external override returns (FeeWrapper wrapper) {
         if (block.chainid != HarnessConfig.CHAIN_ID) revert NotLocalChain(block.chainid);
-        if (vm.envOr("INITIAL_ROUTERS", ",", new address[](0)).length != 0) revert InitialRoutersSetByHarness();
+        if (_routersFromEnv().length != 0) revert InitialRoutersSetByHarness();
         (wrapper,) = deployAll(_rolesFromEnv());
     }
 
