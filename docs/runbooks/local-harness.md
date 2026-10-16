@@ -1,6 +1,6 @@
 # Runbook: local chain test harness
 
-Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(planned)** describe commands that do not exist yet. The mock contracts, `DeployHarness.s.sol`, the forge smoke script and the `Deploy.s.sol` role guard are built (PR 1). Nothing here uses real funds, a live network or a secret.
+Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(planned)** describe commands that do not exist yet. The mock contracts, `DeployHarness.s.sol`, the forge smoke script and the `Deploy.s.sol` role guard are built (PR 1), the TypeScript smoke (PR 2), and `@ranvier/chains/local-dev` with its guard tests (PR 3). Nothing here uses real funds, a live network or a secret.
 
 ## Rules
 
@@ -11,6 +11,8 @@ Design: [ADR 0013](../adr/0013-local-fork-test-harness.md). Sections marked **(p
   - Commands below use `--unlocked --sender <address>`, so no key is typed or stored.
 - **Ports.** Anvil 8645, API 4310, web 3310, all on 127.0.0.1. **Never use or stop port 3000** (the owner's dev server). The harness only stops processes it started.
 - **No `.env`.** The harness needs no `.env` file. Do not print or copy one.
+  - Do not keep a `contracts/.env` at all: forge loads it automatically for every `forge script`, including the one `pnpm harness:smoke` runs, so a stray value (a role address, `INITIAL_ROUTERS`, an RPC or key variable) silently changes the deploy.
+  - The forge child that `pnpm harness:smoke` starts also loads your global Foundry config (`~/.foundry/foundry.toml`) next to `contracts/foundry.toml`. Keep profile overrides out of it, or expect them to apply to the harness too.
 
 | Role                       | Anvil account | Address                                      |
 | -------------------------- | ------------- | -------------------------------------------- |
@@ -79,7 +81,7 @@ Pairs (rates from ETH and hWETH at $3,000, every other harness token at $1, all 
 
 ### Address table (fresh anvil, chain 31337)
 
-CREATE2 through the factory at `0x4e59b44847b379578588920cA78FbF26c0B4956C`. The mock addresses depend only on the salt and the init code, not on who deploys. `HarnessConfig.t.sol` recomputes them, and `DeployHarness` stops with `MockAddressChanged` if a deployed address differs. Changing a mock moves its address: update `HarnessConfig.sol` and this table in the same PR.
+CREATE2 through the factory at `0x4e59b44847b379578588920cA78FbF26c0B4956C`. The mock addresses depend only on the salt and the init code, not on who deploys. `HarnessConfig.t.sol` recomputes them, and `DeployHarness` stops with `MockAddressChanged` if a deployed address differs. Changing a mock moves its address: update `HarnessConfig.sol`, this table and `packages/chains/src/local-dev.ts` in the same PR (`pinned.test.ts` fails until all three agree).
 
 | Contract            | Salt (bytes32 string)             | Address                                      |
 | ------------------- | --------------------------------- | -------------------------------------------- |
@@ -155,7 +157,19 @@ pnpm harness:smoke    # its own anvil on a free 127.0.0.1 port, DeployHarness, t
 RANVIER_HARNESS_RPC_URL=http://127.0.0.1:8645 pnpm --filter @ranvier/api harness:smoke:rpc
 ```
 
-Before it builds any client, the smoke refuses an RPC URL that is not exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` (no request is sent), then one that does not answer `eth_chainId` 31337 (nothing else is sent). It then checks the pinned table on chain (code at every address, `eip712Domain()` name, version and chain ID, `feeSigner()`, `feeCollector()`, and a router allowlist rebuilt from `RouterSet` events that must be exactly the mock holder) before it sends a transaction. It takes addresses only from `apps/api/scripts/harness/pinned.ts`, which a unit test compares with `HarnessConfig.sol` and the table above. The smoke code lives under `apps/api/scripts/`, which the API build (`tsconfig.build.json`, `rootDir: src`) never compiles.
+Before it builds any client, the smoke refuses an RPC URL that is not exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` (no request is sent), then one that does not answer `eth_chainId` 31337 (nothing else is sent). It then checks the pinned table on chain (code at every address, `eip712Domain()` name, version and chain ID, `feeSigner()`, `feeCollector()`, and a router allowlist rebuilt from `RouterSet` events that must be exactly the mock holder) before it sends a transaction. It takes addresses only from `apps/api/scripts/harness/pinned.ts`, which holds no address literal: it imports them from `@ranvier/chains/local-dev` (below). A unit test (`pinned.test.ts`) compares that module, row by row and in checksummed form, with `HarnessConfig.sol` and the table above, and the smoke's preflight also checks hUSDC's and hWETH's symbol, name and decimals on chain. The smoke code lives under `apps/api/scripts/`, which the API build (`tsconfig.build.json`, `rootDir: src`) never compiles.
+
+## Local chain config (built)
+
+`@ranvier/chains/local-dev` (`packages/chains/src/local-dev.ts`) is the one TypeScript source of the local chain: `LOCAL_DEV_CHAIN` (key `evm:31337`, name "Local test chain (not a real network)", the registry's `ChainConfig` shape plus `chainId` and the tokens ETH, hWETH and hUSDC) and `LOCAL_DEV_CONTRACTS` (the mock holder and settler, the wrapper, the scenario tokens and the CREATE2 factory). Both are deep-frozen. hUSDC is deliberately not a stablecoin there: a mock token never selects a fee rate.
+
+It is a subpath export only. It is never in the package index, `CHAINS`, `TOKEN_LIST`, `PUBLIC_RPC_URLS`, `TRUSTED_ROUTERS` or `ZEROX_SETTLERS`; putting 31337 into the registry or the router policy would also put it into `NEVER_LOCAL_CHAINS` and deny the harness key. Guards (ADR 0013, section 2):
+
+- `packages/chains/src/local-dev.test.ts`: the module's data, deep freeze, absence from the registry, token list and RPC defaults, and no local-dev export from the index (runtime, TypeScript surface including types, and a fresh `tsc` build of the package);
+- `apps/api/scripts/harness/local-chain-guards.test.ts`: no 31337 or harness address in `CHAINS`, `TOKEN_LIST`, `TRUSTED_ROUTERS`, `ZEROX_SETTLERS` or the `/v1/chains` and `/v1/tokens` answers; 31337 in `LOCAL_SIGNER_DEFAULT_CHAINS` and not in `NEVER_LOCAL_CHAINS` (asserted, never changed);
+- `apps/api/scripts/harness/import-graph.test.ts`: a static import graph (static and type imports, `export *`, `export { } from`, `import()`, `require()`, `import x = require()`) from `apps/api/src/main.ts`, every production module of `apps/web/src` plus `next.config.ts`, and the chains index reaches neither local-dev nor `apps/api/scripts/`, `apps/api/src/harness/` or `contracts/test/harness/`. A dynamic import it cannot follow fails the test;
+- `apps/api/scripts/harness/build-output.test.ts`: a real build of the API into a scratch directory holds no local-chain name, key, address, subpath or harness path;
+- `pnpm guard:local-chain`: builds the API and the web for real (`turbo run build --force`), then scans `apps/api/dist` and `apps/web/.next` (without `cache/` and `dev/`) for the same strings. `--no-build` scans the existing output. It is not in CI yet (the release gate is PR 7).
 
 ## CI (planned)
 
@@ -181,7 +195,7 @@ The owner decided against fork mode for now. It needs an archive RPC (public end
 | Swap reverts `QuoteExpired`                                            | Chain time is past the deadline (for example after `evm_increaseTime`). Ask for a new quote.                              |
 | `harness:up` says a port is in use                                     | Something else holds 8645, 4310 or 3310. Stop it yourself; the harness will not.                                          |
 | Quotes fail with `below_oracle_value`                                  | Expected on the "under oracle" test pair. On a normal pair, the oracle constants and the settler rates disagree.          |
-| `DeployHarness` reverts `MockAddressChanged`                           | A mock's code changed, so its CREATE2 address moved. Update `HarnessConfig.sol` and the address table.                    |
+| `DeployHarness` reverts `MockAddressChanged`                           | A mock's code changed, so its CREATE2 address moved. Update `HarnessConfig.sol`, the address table and `local-dev.ts`.    |
 | `DeployHarness` reverts `InitialRoutersSetByHarness`                   | `INITIAL_ROUTERS` is set in your shell. Unset it: the harness allowlists its own holder.                                  |
 | A deploy reverts `PublishedDevAddress` or `InitialRoutersRefused`      | The role guard: a published address in a role off 31337, or initial routers off the listed testnets. Fix the environment. |
 
