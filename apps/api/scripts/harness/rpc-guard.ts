@@ -13,8 +13,6 @@
  *
  * Every signed transaction also carries EIP-155 chain ID 31337, so it is valid on no other chain.
  */
-import { HARNESS_CHAIN_ID } from './pinned.js';
-
 /** A refusal: the harness sends nothing to this endpoint. */
 export class HarnessRpcRefusedError extends Error {
   override readonly name = 'HarnessRpcRefusedError';
@@ -28,8 +26,8 @@ const LOOPBACK_RPC = /^http:\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})\/?$/;
 /** The owner's development web server; the harness never talks to it (runbook, "Ports"). */
 const OWNER_DEV_PORT = 3000;
 
-/** `eth_chainId` of the local chain: 0x7a69 (31337). */
-export const LOCAL_CHAIN_ID_HEX = `0x${HARNESS_CHAIN_ID.toString(16)}`;
+/** `eth_chainId` of the local chain. A literal: never derived from data (PR 3 review, M1). */
+export const LOCAL_CHAIN_ID_HEX = '0x7a69'; // 31337
 
 /**
  * Returns the URL without a trailing slash, or throws `HarnessRpcRefusedError`. Pure: it never

@@ -14,7 +14,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAddress } from 'viem';
 import { devAccounts } from './dev-accounts.js';
-import { FEE_WRAPPER_SALT, HARNESS_CHAIN_ID } from './pinned.js';
+import { FEE_WRAPPER_SALT } from './pinned.js';
 import { assertLoopbackRpcUrl, verifyLocalChain } from './rpc-guard.js';
 
 export interface Foundry {
@@ -98,7 +98,7 @@ export async function startAnvil(foundry: Foundry, port: number): Promise<AnvilH
       '--port',
       String(port),
       '--chain-id',
-      String(HARNESS_CHAIN_ID),
+      '31337', // a literal: never derived from data (PR 3 review, M1)
       '--silent',
     ],
     { env: foundryEnv(foundry), stdio: 'ignore' },

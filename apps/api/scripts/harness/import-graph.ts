@@ -1,18 +1,22 @@
 /**
  * LOCAL TEST HARNESS GUARD (ADR 0013, section 2). Never imported by `src/`.
  *
- * A static import graph over the repo's TypeScript sources, for the guard that production entry
- * points reach neither `@ranvier/chains/local-dev` nor any harness code. It follows every module
- * reference form TypeScript has: `import` (value and type), `export * from`, `export { } from`,
- * `import x = require()`, `import('...')`, `require('...')`, `require.resolve('...')` and
- * `import.meta.resolve('...')`. A dynamic form whose argument is not a string literal cannot be
- * followed, so it is reported as a problem instead of being skipped (fail closed), and so is a
- * relative or workspace specifier that does not resolve.
+ * A static import graph over the repo's TypeScript and JavaScript sources, for the guard that
+ * production code reaches neither `@ranvier/chains/local-dev` nor any harness code. It parses
+ * every `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` and `.cjs` file it reaches and follows
+ * every module reference form: `import` (value and type), `export * from`, `export { } from`,
+ * `import x = require()`, `import('...')`, `require('...')`, `require.resolve('...')`,
+ * `import.meta.resolve('...')`, `new URL('...', import.meta.url)` (which covers
+ * `new Worker(new URL(...))` and `new SharedWorker(new URL(...))`) and `new Worker('...')`.
+ *
+ * Fail closed: a dynamic form whose argument is not a string literal cannot be followed, so it is a
+ * problem, never skipped; so is a relative, `@/`, `#` or workspace specifier that does not resolve.
  *
  * Resolution: relative paths (with the `.js` -> `.ts`/`.tsx` mapping NodeNext uses), the web's
- * `@/` alias, and `@ranvier/<pkg>[/<subpath>]` through that package's `exports` map, from
- * `./dist/<x>.js` back to `src/<x>.ts`. Any other bare specifier is an external package: recorded,
- * not followed (no workspace code lives in node_modules).
+ * `@/` alias, `#` specifiers through the owning package's `imports` map (every target of a
+ * conditional entry is followed), and `@ranvier/<pkg>[/<subpath>]` through that package's
+ * `exports` map, from `./dist/<x>.js` back to `src/<x>.ts`. Any other bare specifier is an
+ * external package: recorded, not followed (no workspace code lives in node_modules).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -35,7 +39,22 @@ export interface GraphResult {
   problems: string[];
 }
 
-const CODE = /\.(?:ts|tsx|mts|cts)$/;
+/** Source files the graph parses (everything else it reaches is a leaf: CSS, JSON, images). */
+export const CODE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+
+function scriptKind(fileName: string): ts.ScriptKind {
+  if (/\.tsx$/.test(fileName)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/.test(fileName)) return ts.ScriptKind.JSX;
+  if (/\.(?:js|mjs|cjs)$/.test(fileName)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+const isImportMetaUrl = (node: ts.Node | undefined): boolean =>
+  node !== undefined &&
+  ts.isPropertyAccessExpression(node) &&
+  node.name.text === 'url' &&
+  ts.isMetaProperty(node.expression) &&
+  node.expression.name.text === 'meta';
 
 /** Every module reference in one source file. */
 export function moduleRefs(
@@ -45,22 +64,28 @@ export function moduleRefs(
   refs: ModuleRef[];
   problems: string[];
 } {
-  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, kind);
+  const source = ts.createSourceFile(
+    fileName,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(fileName),
+  );
   const refs: ModuleRef[] = [];
   const problems: string[] = [];
   const literal = (node: ts.Node | undefined): string | undefined =>
     node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
       ? node.text
       : undefined;
-  const dynamic = (call: ts.CallExpression, form: string): void => {
-    const spec = literal(call.arguments[0]);
-    if (spec === undefined) {
-      const { line } = source.getLineAndCharacterOfPosition(call.getStart());
-      problems.push(`${fileName}:${line + 1}: ${form} with a non-literal argument`);
-    } else {
-      refs.push({ specifier: spec, form });
-    }
+  const problem = (node: ts.Node, form: string): void => {
+    const { line } = source.getLineAndCharacterOfPosition(node.getStart());
+    problems.push(`${fileName}:${line + 1}: ${form} with a non-literal argument`);
+  };
+  const dynamic = (call: ts.CallExpression | ts.NewExpression, form: string): void => {
+    const arg = call.arguments?.[0];
+    const spec = literal(arg);
+    if (spec === undefined) problem(call, form);
+    else refs.push({ specifier: spec, form });
   };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
@@ -95,6 +120,22 @@ export function moduleRefs(
       ) {
         dynamic(node, 'resolve');
       }
+    } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+      const ctor = node.expression.text;
+      const first = node.arguments?.[0];
+      if (ctor === 'URL' && isImportMetaUrl(node.arguments?.[1])) {
+        // A file next to this module: the bundler emits or loads it.
+        dynamic(node, 'new-url');
+      } else if (ctor === 'Worker' || ctor === 'SharedWorker') {
+        // `new Worker(new URL(...))` is followed through the URL; a plain string is a path; any
+        // other argument cannot be followed.
+        const isUrl =
+          first !== undefined &&
+          ts.isNewExpression(first) &&
+          ts.isIdentifier(first.expression) &&
+          first.expression.text === 'URL';
+        if (!isUrl) dynamic(node, ctor === 'Worker' ? 'worker' : 'shared-worker');
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -107,6 +148,7 @@ function isFile(path: string): boolean {
 }
 
 interface Workspace {
+  repoRoot: string;
   /** `@ranvier/<name>` -> package directory. */
   packages: Map<string, string>;
   /** Directory whose files resolve `@/` (the web app's `src/`), keyed by the app directory. */
@@ -126,20 +168,23 @@ function workspace(repoRoot: string): Workspace {
     }
   }
   const web = join(repoRoot, 'apps/web');
-  return { packages, aliasRoots: new Map([[web, join(web, 'src')]]) };
+  return { repoRoot, packages, aliasRoots: new Map([[web, join(web, 'src')]]) };
 }
 
 /** A path without extension, or with a `.js`-family one, to the source file it names. */
 function resolveFile(base: string): string | undefined {
-  const candidates = /\.(?:js|jsx|mjs|cjs)$/.test(base)
+  const jsExt = /\.(?:js|jsx|mjs|cjs)$/;
+  const candidates = jsExt.test(base)
     ? [
-        base.replace(/\.(?:js|jsx|mjs|cjs)$/, (e) =>
-          e === '.mjs' ? '.mts' : e === '.cjs' ? '.cts' : '.ts',
-        ),
+        base.replace(jsExt, (e) => (e === '.mjs' ? '.mts' : e === '.cjs' ? '.cts' : '.ts')),
         base.replace(/\.(?:js|jsx)$/, '.tsx'),
         base,
       ]
-    : [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')];
+    : [
+        base,
+        ...['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'].map((e) => base + e),
+        ...['index.ts', 'index.tsx', 'index.js', 'index.mjs'].map((i) => join(base, i)),
+      ];
   return candidates.find(isFile);
 }
 
@@ -159,14 +204,66 @@ function resolveWorkspace(spec: string, ws: Workspace): string | undefined {
   return resolveFile(resolve(dir, src));
 }
 
-export function resolveSpecifier(
+/** The nearest directory at or above `from`'s directory with a package.json, inside the repo. */
+function owningPackage(from: string, ws: Workspace): string | undefined {
+  for (let dir = dirname(from); dir.startsWith(ws.repoRoot); dir = dirname(dir)) {
+    if (isFile(join(dir, 'package.json'))) return dir;
+    if (dir === dirname(dir)) break;
+  }
+  return undefined;
+}
+
+/** Every string leaf of a conditional `imports` target (all conditions are followed). */
+function targets(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(targets);
+  if (typeof value === 'object' && value !== null) return Object.values(value).flatMap(targets);
+  return [];
+}
+
+/**
+ * A `#...` specifier through the owning package's `imports` map (exact keys and `*` patterns).
+ * Returns the target specifiers and the package directory they are relative to, or undefined.
+ */
+function resolveImportsAlias(
   spec: string,
   from: string,
   ws: Workspace,
-): { kind: 'file'; path: string } | { kind: 'external' } | { kind: 'unresolved' } {
+): { pkgDir: string; specs: string[] } | undefined {
+  const pkgDir = owningPackage(from, ws);
+  if (!pkgDir) return undefined;
+  const { imports } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+    imports?: Record<string, unknown>;
+  };
+  if (!imports) return undefined;
+  if (spec in imports) return { pkgDir, specs: targets(imports[spec]) };
+  for (const [key, value] of Object.entries(imports)) {
+    const star = key.indexOf('*');
+    if (star < 0) continue;
+    const [prefix, suffix] = [key.slice(0, star), key.slice(star + 1)];
+    if (spec.startsWith(prefix) && spec.endsWith(suffix) && spec.length >= key.length - 1) {
+      const middle = spec.slice(prefix.length, spec.length - suffix.length);
+      return { pkgDir, specs: targets(value).map((t) => t.replaceAll('*', middle)) };
+    }
+  }
+  return undefined;
+}
+
+export type Resolved =
+  | { kind: 'file'; path: string }
+  | { kind: 'external' }
+  | { kind: 'unresolved' }
+  | { kind: 'alias'; pkgDir: string; specs: string[] };
+
+export function resolveSpecifier(spec: string, from: string, ws: Workspace): Resolved {
   if (spec.startsWith('.') || spec.startsWith('/')) {
     const path = resolveFile(resolve(dirname(from), spec));
     return path ? { kind: 'file', path } : { kind: 'unresolved' };
+  }
+  if (spec.startsWith('file:')) return { kind: 'unresolved' };
+  if (spec.startsWith('#')) {
+    const alias = resolveImportsAlias(spec, from, ws);
+    return alias && alias.specs.length > 0 ? { kind: 'alias', ...alias } : { kind: 'unresolved' };
   }
   if (spec.startsWith('@/')) {
     for (const [app, root] of ws.aliasRoots) {
@@ -186,7 +283,7 @@ export function resolveSpecifier(
 
 /** Everything reachable from `roots` (absolute paths) through module references. */
 export function importGraph(repoRoot: string, roots: readonly string[]): GraphResult {
-  const ws = workspace(repoRoot);
+  const ws = workspace(resolve(repoRoot));
   const result: GraphResult = {
     files: new Set(),
     externals: new Set(),
@@ -197,6 +294,23 @@ export function importGraph(repoRoot: string, roots: readonly string[]): GraphRe
   for (const root of roots) {
     if (!isFile(root)) result.problems.push(`root ${root} does not exist`);
   }
+  /** Follows one reference written in `from` (a file, or a package.json for `imports`). */
+  const follow = (spec: string, form: string, from: string, origin: string, depth = 0): void => {
+    const target = resolveSpecifier(spec, from, ws);
+    if (target.kind === 'external') {
+      result.externals.add(spec);
+    } else if (target.kind === 'unresolved' || (target.kind === 'alias' && depth > 8)) {
+      result.problems.push(`${relative(repoRoot, origin)}: cannot resolve ${form} '${spec}'`);
+    } else if (target.kind === 'alias') {
+      // Relative targets are relative to the package root; bare ones resolve as usual.
+      const base = join(target.pkgDir, 'package.json');
+      for (const t of target.specs)
+        follow(t, `${form} via imports '${spec}'`, base, origin, depth + 1);
+    } else if (!result.files.has(target.path)) {
+      if (!result.parent.has(target.path)) result.parent.set(target.path, origin);
+      queue.push(target.path);
+    }
+  };
   while (queue.length > 0) {
     const file = queue.shift();
     if (file === undefined || result.files.has(file) || !isFile(file)) continue;
@@ -204,19 +318,7 @@ export function importGraph(repoRoot: string, roots: readonly string[]): GraphRe
     if (!CODE.test(file)) continue; // CSS, JSON, images: leaves
     const { refs, problems } = moduleRefs(file, readFileSync(file, 'utf8'));
     result.problems.push(...problems.map((p) => relative(repoRoot, p)));
-    for (const ref of refs) {
-      const target = resolveSpecifier(ref.specifier, file, ws);
-      if (target.kind === 'external') {
-        result.externals.add(ref.specifier);
-      } else if (target.kind === 'unresolved') {
-        result.problems.push(
-          `${relative(repoRoot, file)}: cannot resolve ${ref.form} '${ref.specifier}'`,
-        );
-      } else if (!result.files.has(target.path)) {
-        if (!result.parent.has(target.path)) result.parent.set(target.path, file);
-        queue.push(target.path);
-      }
-    }
+    for (const ref of refs) follow(ref.specifier, ref.form, file, file);
   }
   return result;
 }
@@ -254,13 +356,43 @@ export function harnessReached(repoRoot: string, graph: GraphResult): string[] {
   return [...files, ...specs];
 }
 
-/** Every production `.ts`/`.tsx` file under `dir` (tests and test helpers excluded). */
-export function productionFiles(dir: string): string[] {
+/** Test files: `*.test.*` and `*.spec.*` in any source extension. */
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/** Every production source file under `dir`: tests, declaration files and `exclude` left out. */
+export function productionFiles(
+  dir: string,
+  exclude: (path: string) => boolean = () => false,
+): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const path = join(dir, e.name);
-    if (e.isDirectory()) return productionFiles(path);
-    return CODE.test(e.name) && !/\.(?:test|spec)\.tsx?$/.test(e.name) && !e.name.endsWith('.d.ts')
+    if (exclude(path)) return [];
+    if (e.isDirectory()) return productionFiles(path, exclude);
+    return CODE.test(e.name) && !TEST_FILE.test(e.name) && !/\.d\.[cm]?ts$/.test(e.name)
       ? [path]
       : [];
   });
+}
+
+/** Every `@ranvier/*` package and app source directory, for production roots. */
+export function productionRoots(repoRoot: string): string[] {
+  const at = (rel: string): string => join(repoRoot, rel);
+  const packages = existsSync(at('packages'))
+    ? readdirSync(at('packages'), { withFileTypes: true })
+        .filter((e) => e.isDirectory() && existsSync(at(`packages/${e.name}/src`)))
+        .map((e) => at(`packages/${e.name}/src`))
+    : [];
+  const localDev = at('packages/chains/src/local-dev.ts');
+  return [
+    // Every API module, not only main.ts: kms-smoke.ts and any other entry is built into dist/.
+    // src/testing/ is included too although tsconfig.build.json leaves it out of dist/: being
+    // stricter costs nothing. Left out: *.test.ts files (never built) and src/harness/, the
+    // planned harness entry (PR 4), which is excluded from the build and is what we guard against.
+    ...productionFiles(at('apps/api/src'), (p) => p === at('apps/api/src/harness')),
+    ...(existsSync(at('apps/workers/src')) ? productionFiles(at('apps/workers/src')) : []),
+    ...(existsSync(at('apps/web/src')) ? productionFiles(at('apps/web/src')) : []),
+    ...(isFile(at('apps/web/next.config.ts')) ? [at('apps/web/next.config.ts')] : []),
+    // Every package's sources except local-dev itself (its own tests are already left out).
+    ...packages.flatMap((dir) => productionFiles(dir, (p) => p === localDev)),
+  ];
 }

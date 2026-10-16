@@ -19,9 +19,28 @@ import {
 } from '@ranvier/chains/local-dev';
 import { getAddress, type Hex } from 'viem';
 
-/** The only chain the harness talks to. 31337 is not reserved: loopback is checked as well. */
-export const HARNESS_CHAIN_ID = LOCAL_DEV_CHAIN_ID;
-export const HARNESS_CHAIN_KEY = LOCAL_DEV_CHAIN_KEY;
+/**
+ * The only chain the harness talks to. 31337 is not reserved: loopback is checked as well.
+ *
+ * LITERALS on purpose (security review of PR 3, M1): the harness's 31337-only rails (the RPC
+ * chain-ID check, anvil's `--chain-id`, the local key's allowlist) must never follow a data
+ * constant. If `@ranvier/chains/local-dev` ever names another chain, this module refuses to load
+ * (`assertLocalDevChain` below), so no harness code runs at all.
+ */
+export const HARNESS_CHAIN_ID = 31337;
+export const HARNESS_CHAIN_KEY = 'evm:31337' as const;
+
+/** Throws unless the local-dev data is chain 31337 / `evm:31337`. Run at module load. */
+export function assertLocalDevChain(chainId: number, key: string, chainIdField: number): void {
+  if (chainId !== 31337 || chainIdField !== 31337 || key !== 'evm:31337') {
+    throw new Error(
+      `@ranvier/chains/local-dev names chain ${String(chainId)} (${key}); the harness runs on ` +
+        '31337 only and refuses to load',
+    );
+  }
+}
+assertLocalDevChain(LOCAL_DEV_CHAIN_ID, LOCAL_DEV_CHAIN_KEY, LOCAL_DEV_CHAIN.chainId);
+assertLocalDevChain(LOCAL_DEV_CHAIN_ID, LOCAL_DEV_CHAIN.key, LOCAL_DEV_CHAIN.chainId);
 /** viem chain fields, from the same module. */
 export const HARNESS_CHAIN_NAME = LOCAL_DEV_CHAIN.name;
 export const HARNESS_NATIVE = localDevToken('ETH');

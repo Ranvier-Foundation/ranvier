@@ -12,7 +12,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { harnessReached, importGraph, moduleRefs, productionFiles } from './import-graph.js';
+import {
+  harnessReached,
+  importGraph,
+  moduleRefs,
+  productionFiles,
+  productionRoots,
+} from './import-graph.js';
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
 const at = (rel: string): string => join(REPO, rel);
@@ -35,6 +41,11 @@ describe('moduleRefs sees every module reference form', () => {
     ["const p = import.meta.resolve('x');", 'resolve'],
     ["type T = import('x').A;", 'import-type'],
     ["function f() { return () => import('x'); }", 'dynamic-import'],
+    ["const u = new URL('x', import.meta.url);", 'new-url'],
+    ["const w = new Worker(new URL('x', import.meta.url));", 'new-url'],
+    ["const w = new SharedWorker(new URL('x', import.meta.url), { type: 'module' });", 'new-url'],
+    ["const w = new Worker('x');", 'worker'],
+    ["const w = new SharedWorker('x');", 'shared-worker'],
   ])('%s', (code, form) => {
     expect(moduleRefs('f.ts', code)).toEqual({ refs: [{ specifier: 'x', form }], problems: [] });
   });
@@ -49,6 +60,23 @@ describe('moduleRefs sees every module reference form', () => {
       'f.ts:3: require with a non-literal argument',
       'f.ts:4: resolve with a non-literal argument',
     ]);
+  });
+
+  it('reports a URL or worker it cannot follow (P8)', () => {
+    const { refs, problems } = moduleRefs(
+      'f.ts',
+      "const n = 'x';\nnew URL(n, import.meta.url);\nnew Worker(n);\nnew URL('https://a.example/x');",
+    );
+    expect(refs).toEqual([]);
+    expect(problems).toEqual([
+      'f.ts:2: new-url with a non-literal argument',
+      'f.ts:3: worker with a non-literal argument',
+    ]);
+  });
+
+  it.each(['f.js', 'f.mjs', 'f.cjs', 'f.jsx'])('parses JavaScript too (P1/P2): %s', (file) => {
+    const code = "import a from 'x';\nconst b = require('y');\nexport * from 'z';";
+    expect(moduleRefs(file, code).refs.map((r) => r.specifier)).toEqual(['x', 'y', 'z']);
   });
 
   it('reads TSX', () => {
@@ -151,6 +179,83 @@ describe(
   },
 );
 
+describe(
+  'productionRoots covers every production source directory (P4, P5, P9)',
+  { timeout: 60_000 },
+  () => {
+    let root = '';
+    const write = (path: string, text: string): void => {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+    const reached = (): string[] => {
+      const graph = importGraph(root, productionRoots(root));
+      expect(graph.problems).toEqual([]);
+      return harnessReached(root, graph);
+    };
+
+    beforeAll(() => {
+      root = mkdtempSync(join(tmpdir(), 'ranvier-roots-'));
+      write(
+        'packages/chains/package.json',
+        JSON.stringify({
+          name: '@ranvier/chains',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './local-dev': { default: './dist/local-dev.js' },
+          },
+        }),
+      );
+      write('packages/chains/src/index.ts', 'export const CHAINS = [];\n');
+      write('packages/chains/src/local-dev.ts', 'export const LOCAL_DEV_CHAIN = {};\n');
+      write('packages/chains/src/local-dev.test.ts', "import './local-dev.js';\n");
+      write('packages/fees/package.json', JSON.stringify({ name: '@ranvier/fees' }));
+      write('packages/fees/src/index.ts', 'export const FEE = 1;\n');
+      write('apps/api/package.json', JSON.stringify({ name: '@ranvier/api' }));
+      write('apps/api/src/main.ts', "import '@ranvier/chains';\n");
+      write('apps/api/src/x.test.ts', "import '@ranvier/chains/local-dev';\n");
+      write('apps/api/src/harness/main.ts', "import '@ranvier/chains/local-dev';\n");
+      write('apps/workers/package.json', JSON.stringify({ name: '@ranvier/workers' }));
+      write('apps/workers/src/main.ts', 'export {};\n');
+      write('apps/web/package.json', JSON.stringify({ name: '@ranvier/web' }));
+      write('apps/web/src/page.tsx', 'export const P = 1;\n');
+    });
+    afterAll(() => {
+      if (root) rmSync(root, { recursive: true, force: true });
+    });
+
+    it('a clean scratch repo reaches nothing (local-dev itself, tests and src/harness are not roots)', () => {
+      const roots = rel2(root, productionRoots(root));
+      expect(roots.sort()).toEqual([
+        'apps/api/src/main.ts',
+        'apps/web/src/page.tsx',
+        'apps/workers/src/main.ts',
+        'packages/chains/src/index.ts',
+        'packages/fees/src/index.ts',
+      ]);
+      expect(reached()).toEqual([]);
+    });
+
+    it.each([
+      ['P4 workers', 'apps/workers/src/health.ts'],
+      ['P5 an API entry other than main.ts (kms-smoke.ts)', 'apps/api/src/kms-smoke.ts'],
+      ['an API test helper (src/testing/)', 'apps/api/src/testing/helper.ts'],
+      ['P9 packages/fees re-exporting it', 'packages/fees/src/schedule.ts'],
+      ['a web module', 'apps/web/src/lib/z.mjs'],
+    ])('%s', (_name, file) => {
+      write(file, "export * from '@ranvier/chains/local-dev';\n");
+      try {
+        expect(reached()).not.toEqual([]);
+      } finally {
+        rmSync(join(root, file));
+      }
+    });
+  },
+);
+
+const rel2 = (base: string, files: Iterable<string>): string[] =>
+  [...files].map((f) => relative(base, f));
+
 describe('production code reaches no harness code (the real repo)', { timeout: 120_000 }, () => {
   it('the API entry src/main.ts', () => {
     const graph = importGraph(REPO, [at('apps/api/src/main.ts')]);
@@ -177,6 +282,25 @@ describe('production code reaches no harness code (the real repo)', { timeout: 1
     expect(rel(graph.files)).toEqual(
       expect.arrayContaining(['packages/chains/src/index.ts', 'packages/fees/src/index.ts']),
     );
+  });
+
+  it('every production source file: apps/api/src, apps/workers/src, apps/web/src, packages/*/src', () => {
+    const roots = productionRoots(REPO);
+    expect(rel(roots)).toEqual(
+      expect.arrayContaining([
+        'apps/api/src/main.ts',
+        'apps/api/src/kms-smoke.ts',
+        'apps/workers/src/main.ts',
+        'apps/web/next.config.ts',
+        'packages/fees/src/schedule.ts',
+        'packages/chains/src/verify-cli.ts',
+      ]),
+    );
+    expect(rel(roots)).not.toContain('packages/chains/src/local-dev.ts');
+    expect(rel(roots).filter((f) => /\.test\./.test(f))).toEqual([]);
+    const graph = importGraph(REPO, roots);
+    expect(graph.problems).toEqual([]);
+    expect(harnessReached(REPO, graph)).toEqual([]);
   });
 
   it('the @ranvier/chains index', () => {

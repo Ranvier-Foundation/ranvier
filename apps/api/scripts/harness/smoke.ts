@@ -175,9 +175,10 @@ async function connect(url: string) {
     pollingInterval: 100,
   });
   const test = createTestClient({ chain, transport, mode: 'anvil' });
-  // Allowed for chain 31337 ONLY, never the default list (which includes three testnets).
+  // Allowed for chain 31337 ONLY, never the default list (which includes three testnets). A
+  // literal: never derived from data (PR 3 review, M1).
   const signer = new LocalKeySigner(publicAnvilKey(accounts.feeSigner), {
-    allowedChainIds: [HARNESS_CHAIN_ID],
+    allowedChainIds: [31337],
   });
   const policy = buildRoutePolicy({
     [HARNESS_CHAIN_ID]: [

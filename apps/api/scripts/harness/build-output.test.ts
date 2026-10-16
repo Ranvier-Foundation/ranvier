@@ -12,7 +12,14 @@ import { join } from 'node:path';
 import { getAddress } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LOCAL_DEV_CONTRACTS } from '@ranvier/chains/local-dev';
-import { localChainNeedles, REPO, scanOutput } from './build-output.js';
+import {
+  localChainNeedles,
+  productionSourceFiles,
+  REPO,
+  scanOutput,
+  scanSources,
+} from './build-output.js';
+import { localDevAddresses } from '@ranvier/chains/local-dev';
 
 const scratch = (prefix: string): string => mkdtempSync(join(tmpdir(), prefix));
 
@@ -75,5 +82,74 @@ describe('the API production build (tsconfig.build.json, built now)', { timeout:
     expect(scanOutput(out, ['buildServer']).hits.map((h) => h.file)).toContain(
       join(out, 'main.js'),
     );
+  });
+});
+
+describe('P7: production sources hold no harness literal', () => {
+  it('the real repo: every production source directory is clean', () => {
+    const files = productionSourceFiles(REPO).map((f) => f.slice(REPO.length));
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'apps/api/src/main.ts',
+        'apps/api/src/kms-smoke.ts',
+        'apps/workers/src/main.ts',
+        'apps/web/next.config.ts',
+        'packages/fees/src/schedule.ts',
+        'packages/chains/src/registry.ts',
+        'contracts/src/FeeWrapper.sol',
+        'contracts/script/Deploy.s.sol',
+      ]),
+    );
+    expect(files).not.toContain('packages/chains/src/local-dev.ts');
+    expect(scanSources(REPO).hits).toEqual([]);
+  });
+
+  describe('planted in a scratch repo', () => {
+    let root = '';
+    const write = (path: string, text: string): void => {
+      mkdirSync(join(root, path, '..'), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+    beforeAll(() => {
+      root = scratch('ranvier-src-scan-');
+      write('apps/api/src/main.ts', 'export {};\n');
+      write(
+        'packages/chains/src/local-dev.ts',
+        `export const A = '${localDevAddresses()[0] ?? ''}';\n`,
+      );
+      write(
+        'packages/chains/src/local-dev.test.ts',
+        "import { LOCAL_DEV_CHAIN } from './local-dev.js';\n",
+      );
+      write('apps/api/src/harness/main.ts', "import '@ranvier/chains/local-dev';\n");
+      write('docs/x.md', 'scripts/harness\n');
+    });
+    afterAll(() => {
+      if (root) rmSync(root, { recursive: true, force: true });
+    });
+
+    it('local-dev itself, its test, src/harness and docs are not scanned', () => {
+      expect(scanSources(root)).toEqual({ files: 1, hits: [] });
+    });
+
+    it.each([
+      [
+        'apps/api/src/routers.ts',
+        `export const R = '${getAddress(LOCAL_DEV_CONTRACTS.allowanceHolder)}';`,
+      ],
+      ['apps/api/src/lower.ts', `export const R = '${LOCAL_DEV_CONTRACTS.feeWrapper.slice(2)}';`],
+      ['apps/workers/src/x.ts', "const p = '../../api/scripts/harness/pinned.js';"],
+      ['apps/web/src/lib/x.mjs', 'export const N = "LOCAL_DEV_CHAIN";'],
+      ['packages/fees/src/x.ts', '// see ranvier.harness.hUSDC'],
+      ['contracts/script/X.s.sol', '// contracts/test/harness/HarnessConfig.sol'],
+      ['apps/web/public/x.json', '{"a":"chains/local-dev"}'],
+    ])('%s', (file, text) => {
+      write(file, text);
+      try {
+        expect(scanSources(root).hits.map((h) => h.file.slice(root.length + 1))).toEqual([file]);
+      } finally {
+        rmSync(join(root, file));
+      }
+    });
   });
 });
