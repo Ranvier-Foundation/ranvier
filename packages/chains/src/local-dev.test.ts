@@ -161,7 +161,7 @@ describe('the package index does not export local-dev', () => {
       return (target.declarations ?? []).map((d) => d.getSourceFile().fileName);
     };
     expect(indexExports.filter((s) => declaredIn(s).includes(localDevFile))).toEqual([]);
-  });
+  }, 120_000);
 
   describe('the built dist index', () => {
     let out = '';

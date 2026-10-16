@@ -1,0 +1,194 @@
+/**
+ * ADR 0013, section 2 (PR 3): the production API entry (`src/main.ts` and everything it reaches),
+ * every production web module (everything `apps/web/src` reaches, plus `next.config.ts`) and the
+ * `@ranvier/chains` index reach neither `@ranvier/chains/local-dev` nor any harness code
+ * (`apps/api/scripts/`, `apps/api/src/harness/`, `contracts/test/harness/`).
+ *
+ * Source analysis only; `build-output.test.ts` and `pnpm guard:local-chain` check the real
+ * build output as well.
+ */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { harnessReached, importGraph, moduleRefs, productionFiles } from './import-graph.js';
+
+const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
+const at = (rel: string): string => join(REPO, rel);
+const rel = (files: Iterable<string>): string[] => [...files].map((f) => relative(REPO, f));
+
+describe('moduleRefs sees every module reference form', () => {
+  it.each([
+    ["import { a } from 'x';", 'import'],
+    ["import type { A } from 'x';", 'import'],
+    ["import 'x';", 'import'],
+    ["export * from 'x';", 'export-from'],
+    ["export * as ns from 'x';", 'export-from'],
+    ["export { a } from 'x';", 'export-from'],
+    ["export type { A } from 'x';", 'export-from'],
+    ["import a = require('x');", 'import-equals'],
+    ["const m = await import('x');", 'dynamic-import'],
+    ['const m = await import(`x`);', 'dynamic-import'],
+    ["const m = require('x');", 'require'],
+    ["const p = require.resolve('x');", 'resolve'],
+    ["const p = import.meta.resolve('x');", 'resolve'],
+    ["type T = import('x').A;", 'import-type'],
+    ["function f() { return () => import('x'); }", 'dynamic-import'],
+  ])('%s', (code, form) => {
+    expect(moduleRefs('f.ts', code)).toEqual({ refs: [{ specifier: 'x', form }], problems: [] });
+  });
+
+  it('reports a dynamic import or require it cannot follow', () => {
+    const { problems } = moduleRefs(
+      'f.ts',
+      "const n = 'x';\nawait import(n);\nrequire(`${n}`);\nimport.meta.resolve(n);",
+    );
+    expect(problems).toEqual([
+      'f.ts:2: dynamic-import with a non-literal argument',
+      'f.ts:3: require with a non-literal argument',
+      'f.ts:4: resolve with a non-literal argument',
+    ]);
+  });
+
+  it('reads TSX', () => {
+    const code = "import { A } from './a';\nexport const B = () => <A />;";
+    expect(moduleRefs('f.tsx', code).refs).toEqual([{ specifier: './a', form: 'import' }]);
+  });
+});
+
+describe(
+  'importGraph on a scratch workspace catches local-dev through every form',
+  { timeout: 60_000 },
+  () => {
+    let root = '';
+    const write = (path: string, text: string): void => {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+
+    beforeAll(() => {
+      root = mkdtempSync(join(tmpdir(), 'ranvier-graph-'));
+      write(
+        'packages/chains/package.json',
+        JSON.stringify({
+          name: '@ranvier/chains',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './local-dev': { default: './dist/local-dev.js' },
+          },
+        }),
+      );
+      write('packages/chains/src/index.ts', "export * from './registry.js';\n");
+      write('packages/chains/src/registry.ts', 'export const CHAINS = [];\n');
+      write('packages/chains/src/local-dev.ts', 'export const LOCAL_DEV_CHAIN = {};\n');
+      write('apps/web/package.json', JSON.stringify({ name: '@ranvier/web' }));
+      write('apps/web/src/lib/x.ts', 'export const x = 1;\n');
+      write('apps/api/scripts/harness/pinned.ts', 'export const P = 1;\n');
+      write('contracts/test/harness/note.ts', 'export const N = 1;\n');
+    });
+
+    afterAll(() => {
+      if (root) rmSync(root, { recursive: true, force: true });
+    });
+
+    const reach = (code: string, file = 'apps/api/src/main.ts'): string[] => {
+      write(file, code);
+      const graph = importGraph(root, [join(root, file)]);
+      expect(graph.problems).toEqual([]);
+      return harnessReached(root, graph);
+    };
+
+    it('a clean entry reaches nothing', () => {
+      expect(reach("import { CHAINS } from '@ranvier/chains';\nexport { CHAINS };")).toEqual([]);
+    });
+
+    it.each([
+      "import { LOCAL_DEV_CHAIN } from '@ranvier/chains/local-dev';",
+      "import type { X } from '@ranvier/chains/local-dev';",
+      "export * from '@ranvier/chains/local-dev';",
+      "export { LOCAL_DEV_CHAIN } from '@ranvier/chains/local-dev';",
+      "const m = await import('@ranvier/chains/local-dev');",
+      "const m = require('@ranvier/chains/local-dev');",
+      "import m = require('@ranvier/chains/local-dev');",
+      "import { a } from './b.js';", // through a second module (b.ts below)
+      "import '../../../packages/chains/src/local-dev.js';",
+      "import { P } from '../scripts/harness/pinned.js';",
+      "const p = await import('../scripts/harness/pinned.js');",
+      "import '../../../contracts/test/harness/note.js';",
+    ])('%s', (code) => {
+      write('apps/api/src/b.ts', "export * from '@ranvier/chains/local-dev';\n");
+      expect(reach(code)).not.toEqual([]);
+    });
+
+    it('through the package index re-exporting it', () => {
+      write('packages/chains/src/index.ts', "export * from './local-dev.js';\n");
+      try {
+        expect(reach("import '@ranvier/chains';")).toEqual([
+          'apps/api/src/main.ts -> packages/chains/src/index.ts -> packages/chains/src/local-dev.ts',
+        ]);
+      } finally {
+        write('packages/chains/src/index.ts', "export * from './registry.js';\n");
+      }
+    });
+
+    it("through the web's @/ alias", () => {
+      write('apps/web/src/lib/x.ts', "export * from '@ranvier/chains/local-dev';\n");
+      try {
+        expect(reach("import { x } from '@/lib/x';", 'apps/web/src/page.tsx')).toHaveLength(1);
+      } finally {
+        write('apps/web/src/lib/x.ts', 'export const x = 1;\n');
+      }
+    });
+
+    it('fails closed on what it cannot follow', () => {
+      write('apps/api/src/main.ts', "const s = 'x';\nawait import(s);\nimport './missing.js';");
+      const graph = importGraph(root, [join(root, 'apps/api/src/main.ts')]);
+      expect(graph.problems).toHaveLength(2);
+      write('apps/api/src/main.ts', "import '@ranvier/chains/not-exported';");
+      expect(importGraph(root, [join(root, 'apps/api/src/main.ts')]).problems).toHaveLength(1);
+    });
+  },
+);
+
+describe('production code reaches no harness code (the real repo)', { timeout: 120_000 }, () => {
+  it('the API entry src/main.ts', () => {
+    const graph = importGraph(REPO, [at('apps/api/src/main.ts')]);
+    expect(graph.problems).toEqual([]);
+    expect(harnessReached(REPO, graph)).toEqual([]);
+    // The analysis really walked the API and its workspace packages.
+    expect(rel(graph.files)).toEqual(
+      expect.arrayContaining([
+        'apps/api/src/http/server.ts',
+        'apps/api/src/adapters/signers/local-key.ts',
+        'packages/chains/src/index.ts',
+        'packages/chains/src/registry.ts',
+        'packages/fees/src/index.ts',
+      ]),
+    );
+  });
+
+  it('every production web module under apps/web/src, and next.config.ts', () => {
+    const roots = [...productionFiles(at('apps/web/src')), at('apps/web/next.config.ts')];
+    expect(roots.length).toBeGreaterThan(20);
+    const graph = importGraph(REPO, roots);
+    expect(graph.problems).toEqual([]);
+    expect(harnessReached(REPO, graph)).toEqual([]);
+    expect(rel(graph.files)).toEqual(
+      expect.arrayContaining(['packages/chains/src/index.ts', 'packages/fees/src/index.ts']),
+    );
+  });
+
+  it('the @ranvier/chains index', () => {
+    const graph = importGraph(REPO, [at('packages/chains/src/index.ts')]);
+    expect(graph.problems).toEqual([]);
+    expect(harnessReached(REPO, graph)).toEqual([]);
+    expect(rel(graph.files)).toContain('packages/chains/src/tokens.ts');
+  });
+
+  it('control: the harness smoke does reach local-dev (the analysis is not blind)', () => {
+    const graph = importGraph(REPO, [at('apps/api/scripts/harness/smoke.ts')]);
+    expect(graph.problems).toEqual([]);
+    expect(rel(graph.files)).toContain('packages/chains/src/local-dev.ts');
+  });
+});
