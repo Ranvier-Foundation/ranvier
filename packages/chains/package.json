@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./local-dev": {
+      "types": "./dist/local-dev.d.ts",
+      "default": "./dist/local-dev.js"
     }
   },
   "scripts": {

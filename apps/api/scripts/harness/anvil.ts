@@ -92,7 +92,15 @@ export async function startAnvil(foundry: Foundry, port: number): Promise<AnvilH
   const url = assertLoopbackRpcUrl(`http://127.0.0.1:${port}`);
   const child = spawn(
     foundry.anvil,
-    ['--host', '127.0.0.1', '--port', String(port), '--chain-id', '31337', '--silent'],
+    [
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--chain-id',
+      '31337', // a literal: never derived from data (PR 3 review, M1)
+      '--silent',
+    ],
     { env: foundryEnv(foundry), stdio: 'ignore' },
   );
   const pid = child.pid;

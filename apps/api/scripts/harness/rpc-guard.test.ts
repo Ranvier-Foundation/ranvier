@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { closeAll, loopback, type Received } from '../../src/testing/loopback.js';
-import { assertLoopbackRpcUrl, HarnessRpcRefusedError, verifyLocalChain } from './rpc-guard.js';
+import {
+  assertLoopbackRpcUrl,
+  HarnessRpcRefusedError,
+  LOCAL_CHAIN_ID_HEX,
+  verifyLocalChain,
+} from './rpc-guard.js';
 import { runSmoke } from './smoke.js';
 
 afterEach(async () => {
@@ -136,5 +142,21 @@ describe('verifyLocalChain', () => {
   it('refuses a malformed answer', async () => {
     const server = await loopback(() => Promise.resolve({ status: 200, body: '{"result":31337}' }));
     await expect(verifyLocalChain(server.url)).rejects.toThrow(HarnessRpcRefusedError);
+  });
+});
+
+describe('the 31337 rail is a literal (PR 3 review, M1)', () => {
+  it('LOCAL_CHAIN_ID_HEX is exactly 0x7a69, written as a literal in rpc-guard.ts', () => {
+    expect(LOCAL_CHAIN_ID_HEX).toBe('0x7a69');
+    const src = readFileSync(new URL('./rpc-guard.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/export const LOCAL_CHAIN_ID_HEX = '0x7a69';/);
+    expect(src).not.toMatch(/from '.\/pinned\.js'|local-dev/);
+  });
+
+  it('anvil --chain-id and the smoke local key allowlist are the literal 31337', () => {
+    const anvil = readFileSync(new URL('./anvil.ts', import.meta.url), 'utf8');
+    expect(anvil).toMatch(/'--chain-id',\s*'31337'/);
+    const smoke = readFileSync(new URL('./smoke.ts', import.meta.url), 'utf8');
+    expect(smoke).toMatch(/allowedChainIds: \[31337\]/);
   });
 });

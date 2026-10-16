@@ -253,6 +253,8 @@ PR 1 status (2026-10-15): built on `feat/harness-mock-contracts`. The mocks live
 
 PR 2 status (2026-10-16): built on `feat/harness-ts-smoke`. The smoke lives in `apps/api/scripts/harness/` (not a root `scripts/` folder) so it imports the API's modules directly and reuses the API's `tsx`, `tsconfig.scripts.json` and lint; the API build compiles `src/` only. `pnpm harness:smoke` starts and stops its own anvil; commands are in the [runbook](../runbooks/local-harness.md).
 
+PR 3 status (2026-10-16): built on `feat/harness-local-dev-chain`. `@ranvier/chains/local-dev` exports `LOCAL_DEV_CHAIN` and, for the mocks that do not fit `ChainConfig`, `LOCAL_DEV_CONTRACTS`; `apps/api/scripts/harness/pinned.ts` imports every address from it. The guard tests live in `packages/chains/src/local-dev.test.ts` and `apps/api/scripts/harness/` (they import local-dev, which `src/` may not); `pnpm guard:local-chain` scans the real API and web build output ([runbook](../runbooks/local-harness.md)).
+
 | #   | PR                                                                                                                                                                           | Owner                         | Size | SR  |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---- | --- |
 | 1   | Harness mocks (section 3) with forge tests; `DeployHarness.s.sol`; forge `HarnessSmoke.s.sol` (approve and swap on plain anvil); the `Deploy.s.sol` role guard and its tests | contract-engineer             | M    | yes |

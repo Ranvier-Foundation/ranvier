@@ -18,7 +18,7 @@ import {
 import { slippageFloor } from '../../src/domain/route-safety.js';
 import type { PriceOracle, TokenPrice } from '../../src/ports/price-oracle.js';
 import type { QuoteProvider } from '../../src/ports/quote-provider.js';
-import { ETH_USD, HARNESS_CHAIN_KEY, PINNED } from './pinned.js';
+import { ETH_USD, HARNESS_CHAIN_KEY, HARNESS_NATIVE, PINNED, pinnedDecimals } from './pinned.js';
 
 const lower = (a: string): string => a.toLowerCase();
 
@@ -123,9 +123,9 @@ export class HarnessQuoteProvider implements QuoteProvider {
 const E18 = 10n ** 18n;
 
 const PRICES: ReadonlyMap<string, TokenPrice> = new Map([
-  [NATIVE, { decimals: 18, usdE18: ETH_USD * E18 }],
-  [lower(PINNED.hWETH), { decimals: 18, usdE18: ETH_USD * E18 }],
-  [lower(PINNED.hUSDC), { decimals: 6, usdE18: E18 }],
+  [NATIVE, { decimals: HARNESS_NATIVE.decimals, usdE18: ETH_USD * E18 }],
+  [lower(PINNED.hWETH), { decimals: pinnedDecimals('hWETH'), usdE18: ETH_USD * E18 }],
+  [lower(PINNED.hUSDC), { decimals: pinnedDecimals('hUSDC'), usdE18: E18 }],
   [lower(PINNED.hUNDER), { decimals: 6, usdE18: E18 }],
   [lower(PINNED.hORACLE), { decimals: 6, usdE18: E18 }],
 ]);

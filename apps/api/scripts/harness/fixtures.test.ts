@@ -4,11 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { buildRoutePolicy } from '../../src/domain/route-policy.js';
 import { UnsafeRouteError, vetRoute } from '../../src/domain/route-safety.js';
 import { FixedPriceOracle, HarnessQuoteProvider } from './fixtures.js';
-import { PINNED } from './pinned.js';
+import { devAccounts } from './dev-accounts.js';
+import { HARNESS_CHAIN_ID, HARNESS_CHAIN_KEY, PINNED } from './pinned.js';
 
-const TAKER = '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc';
+const TAKER = devAccounts().user.address.toLowerCase();
 const policy = buildRoutePolicy({
-  31337: [
+  [HARNESS_CHAIN_ID]: [
     { kind: 'zerox-allowance-holder', address: PINNED.allowanceHolder, targets: [PINNED.settler] },
   ],
 });
@@ -16,7 +17,12 @@ const provider = new HarnessQuoteProvider();
 const oracle = new FixedPriceOracle();
 const signal = (): AbortSignal => AbortSignal.timeout(1_000);
 
-function req(sell: string, buy: string, sellAmount: bigint, chain = 'evm:31337'): QuoteRequest {
+function req(
+  sell: string,
+  buy: string,
+  sellAmount: bigint,
+  chain: string = HARNESS_CHAIN_KEY,
+): QuoteRequest {
   const addr = (a: string): string => (a === NATIVE ? NATIVE : a.toLowerCase());
   return {
     sellToken: { chain: chain as QuoteRequest['sellToken']['chain'], address: addr(sell) },
