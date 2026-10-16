@@ -7,6 +7,7 @@ import {
   toHex,
   type Hex,
 } from 'viem';
+import { FEE_WRAPPER_VIEW_ABI } from '../adapters/rpc/viem-chain-reader.js';
 
 /**
  * An in-memory JSON-RPC node behind a fake `fetch`, keyed by URL, for the chain reader tests.
@@ -38,6 +39,17 @@ export type FakeMode =
 /** A token's answer: a balance, a revert, or raw return data. */
 export type TokenAnswer = bigint | 'revert' | { raw: Hex };
 
+/** A FeeWrapper's views, each a value, a revert, or raw return data. */
+export interface FakeWrapper {
+  /** Runtime code (`0x` = no contract). Default: one byte. */
+  code?: Hex;
+  feeSigner: string | 'revert' | { raw: Hex };
+  domain:
+    | { name: string; version: string; chainId: bigint; verifyingContract: string }
+    | 'revert'
+    | { raw: Hex };
+}
+
 export interface FakeNode {
   /** Answer to `eth_chainId`. */
   chainId: number;
@@ -55,6 +67,8 @@ export interface FakeNode {
   results?: Record<string, unknown>;
   /** Replaces the whole aggregate3 return data. */
   aggregateRaw?: Hex;
+  /** FeeWrapper contracts by lowercase address (eth_getCode and its two views). */
+  wrappers?: Map<string, FakeWrapper>;
   /** Replaces the aggregate3 results (wrong lengths, failed own calls...). */
   aggregateResults?: (computed: { success: boolean; returnData: Hex }[]) => {
     success: boolean;
@@ -173,10 +187,45 @@ export class FakeRpc {
         });
       case 'eth_call':
         return this.call(n, params, reply);
+      case 'eth_getCode': {
+        const w = n.wrappers?.get(String(params[0]).toLowerCase());
+        return reply({ result: w ? (w.code ?? '0x00') : '0x' });
+      }
       default:
         return reply({ error: { code: -32601, message: 'method not found' } });
     }
   };
+
+  private wrapperCall(w: FakeWrapper, data: Hex, revert: Record<string, unknown>) {
+    const { functionName } = decodeFunctionData({ abi: FEE_WRAPPER_VIEW_ABI, data });
+    const answer = functionName === 'feeSigner' ? w.feeSigner : w.domain;
+    if (answer === 'revert') return revert;
+    if (typeof answer === 'object' && 'raw' in answer) return { result: answer.raw };
+    if (typeof answer === 'string') {
+      return {
+        result: encodeFunctionResult({
+          abi: FEE_WRAPPER_VIEW_ABI,
+          functionName: 'feeSigner',
+          result: answer as Hex,
+        }),
+      };
+    }
+    return {
+      result: encodeFunctionResult({
+        abi: FEE_WRAPPER_VIEW_ABI,
+        functionName: 'eip712Domain',
+        result: [
+          '0x0f',
+          answer.name,
+          answer.version,
+          answer.chainId,
+          answer.verifyingContract as Hex,
+          `0x${'00'.repeat(32)}`,
+          [],
+        ],
+      }),
+    };
+  }
 
   private call(
     n: FakeNode,
@@ -186,6 +235,8 @@ export class FakeRpc {
     const revert = { error: { code: 3, message: 'execution reverted', data: '0x' } };
     if (n.mode === 'revert-call') return reply(revert);
     const { to, data } = params[0] as { to: string; data: Hex };
+    const wrapper = n.wrappers?.get(to.toLowerCase());
+    if (wrapper) return reply(this.wrapperCall(wrapper, data, revert));
     if (to !== MC) {
       const answer = n.tokens.get(to);
       if (answer === undefined) return reply({ result: '0x' });

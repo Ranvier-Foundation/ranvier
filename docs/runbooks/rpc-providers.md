@@ -47,6 +47,7 @@ The values are secrets. Keep them in the secret store of the deployment, never i
 Before every production release, on the production host:
 
 - [ ] Every chain in `ZEROX_CHAIN_IDS` with a token list has its `RPC_URLS_EVM_<chainId>` set, with two or more providers.
+- [ ] Every signing chain is reachable through them: with a signer, the API refuses to start until it has read `FeeWrapper.feeSigner()` on each (ADR 0005, `startup refused` in the log).
 - [ ] The startup log has no `PUBLIC development RPC endpoints` warning and no `RPC endpoint serves another chain` error.
 - [ ] `GET /v1/chains` shows `"balances": true` for every served chain.
 - [ ] The egress firewall above is in place, and NTP is synchronised (`timedatectl` shows `System clock synchronized: yes`).

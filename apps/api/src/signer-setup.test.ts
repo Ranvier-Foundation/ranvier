@@ -133,6 +133,36 @@ describe('setUpSigning', () => {
     ).toBeUndefined();
   });
 
+  describe('published development addresses (ADR 0013, section 4)', () => {
+    const PUBLISHED = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'; // anvil account 1
+    const BURN = '0x000000000000000000000000000000000000dEaD';
+
+    it.each([PUBLISHED, PUBLISHED.toLowerCase(), BURN, `0x${'0'.repeat(39)}1`])(
+      'refuses KMS_EXPECTED_SIGNER_ADDRESS %s off 31337 before any KMS call',
+      async (expected) => {
+        for (const chains of ['1,8453,42161', '84532']) {
+          const d = deps();
+          await expect(
+            setUpSigning(
+              loadConfig({
+                ...kmsEnv,
+                KMS_EXPECTED_SIGNER_ADDRESS: expected,
+                ZEROX_CHAIN_IDS: chains,
+              }),
+              d.deps,
+            ),
+          ).rejects.toThrow(/^KMS_EXPECTED_SIGNER_ADDRESS is 0x[0-9a-fA-F]{40}, a published/);
+          expect(d.regions).toEqual([]); // no KMS client was even built
+        }
+      },
+    );
+
+    it('does not refuse an ordinary expected address (the pinned golden signer)', async () => {
+      const setup = await setUpSigning(loadConfig(kmsEnv), deps().deps);
+      expect(setup?.signer.address).toBe(EXPECTED);
+    });
+  });
+
   describe('pinning the KMS key (production and mainnets)', () => {
     const TESTNET = { ZEROX_CHAIN_IDS: '84532' };
     const unpinned = { ...kmsEnv, KMS_EXPECTED_SIGNER_ADDRESS: undefined };
@@ -182,7 +212,8 @@ describe('setUpSigning', () => {
     });
 
     it('refuses to start when the key derives to another address', async () => {
-      const other = '0x000000000000000000000000000000000000dEaD';
+      // Not a published address (0x...dEaD is one, and is refused before KMS is called).
+      const other = '0x000000000000000000000000000000000000bEEF';
       await expect(
         setUpSigning(loadConfig({ ...kmsEnv, KMS_EXPECTED_SIGNER_ADDRESS: other }), deps().deps),
       ).rejects.toThrow(`derives to ${EXPECTED}, but KMS_EXPECTED_SIGNER_ADDRESS is ${other}`);
@@ -216,7 +247,7 @@ describe('setUpSigning', () => {
         setUpSigning(
           loadConfig({
             KMS_KEY_ID: FAKE_ALIAS,
-            KMS_EXPECTED_SIGNER_ADDRESS: '0x000000000000000000000000000000000000dEaD',
+            KMS_EXPECTED_SIGNER_ADDRESS: '0x000000000000000000000000000000000000bEEF',
             AWS_REGION: 'eu-west-1',
             FEE_WRAPPER_ADDRESS: WRAPPER,
             ...TESTNET,

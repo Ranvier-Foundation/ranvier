@@ -5,6 +5,7 @@ import { KMS_KEY_ARN, type Config } from './config.js';
 import type { RoutePolicy } from './domain/route-policy.js';
 import { mainnetRulesApply } from './mainnet-rules.js';
 import type { QuoteSigner } from './ports/quote-signer.js';
+import { assertNotPublishedSigner } from './published-addresses.js';
 import { assertKmsSigningChains } from './signing-policy.js';
 
 export interface SigningSetup {
@@ -43,8 +44,11 @@ export function kmsPinRequired(config: Config, nodeEnv: string | undefined): boo
  * - `QUOTE_SIGNER_PRIVATE_KEY`: a local key, testnets and local chains only (ADR 0004).
  * - Neither: quotes are returned unsigned.
  *
- * Follow-up, not built (needs RPC access): compare `FeeWrapper.feeSigner()` on each signing
- * chain with `signer.address` here and refuse to start on a mismatch (ADR 0005).
+ * Either signer is refused when its address is a published development address (the anvil
+ * mnemonic accounts, address(0) and the precompile range, tooling and burn addresses) and any
+ * quoted chain is not 31337; so is such a KMS_EXPECTED_SIGNER_ADDRESS, before KMS is called
+ * (ADR 0013, section 4). The on-chain `FeeWrapper.feeSigner()` comparison runs after this, once
+ * the RPC endpoints are known (`fee-signer-check.ts`, called from main.ts).
  */
 export async function setUpSigning(
   config: Config,
@@ -57,6 +61,11 @@ export async function setUpSigning(
     if (!config.AWS_REGION) throw new Error('AWS_REGION is required when KMS_KEY_ID is set');
     const nodeEnv = 'nodeEnv' in deps ? deps.nodeEnv : process.env.NODE_ENV;
     const expected = config.KMS_EXPECTED_SIGNER_ADDRESS;
+    // A published key imported into KMS as external material is still public (checked before
+    // any KMS call; the derived address is checked again below).
+    if (expected) {
+      assertNotPublishedSigner(expected, config.ZEROX_CHAIN_IDS, 'KMS_EXPECTED_SIGNER_ADDRESS');
+    }
     if (kmsPinRequired(config, nodeEnv)) {
       if (!expected) {
         throw new Error(
@@ -90,6 +99,7 @@ export async function setUpSigning(
           `is ${expected}. Refusing to start with an unexpected fee signer.`,
       );
     }
+    assertNotPublishedSigner(signer.address, config.ZEROX_CHAIN_IDS, 'The KMS key address');
     assertKmsSigningChains(config.ZEROX_CHAIN_IDS, signer, deps.policy);
     return {
       feeWrapper: config.FEE_WRAPPER_ADDRESS as Hex,
@@ -105,6 +115,11 @@ export async function setUpSigning(
       ...(config.LOCAL_SIGNER_CHAIN_IDS ? { allowedChainIds: config.LOCAL_SIGNER_CHAIN_IDS } : {}),
     });
     assertLocalSigningChains(config.ZEROX_CHAIN_IDS, signer);
+    assertNotPublishedSigner(
+      signer.address,
+      config.ZEROX_CHAIN_IDS,
+      'The local signing key address',
+    );
     return {
       feeWrapper: config.FEE_WRAPPER_ADDRESS as Hex,
       signer,
