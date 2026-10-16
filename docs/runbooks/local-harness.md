@@ -143,6 +143,20 @@ cast call 0x60A10abb52c31ec38f1f93c70B64D2Fb00913859 \
 
 The wrapper address changes if `FeeWrapper.sol`, the salt or the constructor arguments change.
 
+## TypeScript smoke (built)
+
+`apps/api/scripts/harness/smoke.ts` runs the API's own code (`quoteFee`, `vetRoute` through `compareProviderQuotes`, `LocalKeySigner` allowed for `[31337]` only, `canSignChain`, `buildSignedSwap`, `signedAnswerEcho`, and once the whole `POST /v1/quotes` handler in process) against the pinned contracts, and sends the user's transactions (anvil account 2, signed locally with chain ID 31337). Every scenario asserts on-chain state: the happy path, replay (`NonceAlreadyUsed`), the under-oracle route refused by `vetRoute`, the underpaying router (`InsufficientOutput`), expiry (`QuoteExpired`, chain time restored with `evm_revert`), a signature for chain 8453 and a tampered fee (`InvalidSignature`), routers off the allowlist (`unknown_router`, `unknown_target`, `RouterNotAllowed`), native input and native output.
+
+```sh
+pnpm harness:smoke    # its own anvil on a free 127.0.0.1 port, DeployHarness, the smoke, then stops that anvil by PID
+                      # skipped with a message when anvil or forge is not on PATH or in ~/.foundry/bin
+
+# against an anvil you started and deployed with the manual steps above:
+RANVIER_HARNESS_RPC_URL=http://127.0.0.1:8645 pnpm --filter @ranvier/api harness:smoke:rpc
+```
+
+Before it builds any client, the smoke refuses an RPC URL that is not exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` (no request is sent), then one that does not answer `eth_chainId` 31337 (nothing else is sent). It then checks the pinned table on chain (code at every address, `eip712Domain()` name, version and chain ID, `feeSigner()`, `feeCollector()`, and a router allowlist rebuilt from `RouterSet` events that must be exactly the mock holder) before it sends a transaction. It takes addresses only from `apps/api/scripts/harness/pinned.ts`, which a unit test compares with `HarnessConfig.sol` and the table above. The smoke code lives under `apps/api/scripts/`, which the API build (`tsconfig.build.json`, `rootDir: src`) never compiles.
+
 ## CI (planned)
 
 The harness gets its own workflow job, with no secrets:

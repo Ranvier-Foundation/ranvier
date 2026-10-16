@@ -157,8 +157,13 @@ async function connect(url: string) {
   // Redirects refused, no retries: a loopback endpoint cannot hand a request on.
   const transport = http(url, { fetchOptions: { redirect: 'error' }, retryCount: 0 });
   const accounts = devAccounts();
-  const pub = createPublicClient({ chain, transport });
-  const wallet = createWalletClient({ account: accounts.user, chain, transport });
+  const pub = createPublicClient({ chain, transport, pollingInterval: 100 });
+  const wallet = createWalletClient({
+    account: accounts.user,
+    chain,
+    transport,
+    pollingInterval: 100,
+  });
   const test = createTestClient({ chain, transport, mode: 'anvil' });
   // Allowed for chain 31337 ONLY, never the default list (which includes three testnets).
   const signer = new LocalKeySigner(publicAnvilKey(accounts.feeSigner), {
